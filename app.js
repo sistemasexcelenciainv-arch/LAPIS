@@ -454,14 +454,7 @@ document.addEventListener('DOMContentLoaded', () => {
             ficha: createEmptyFichaState()
         });
         selectLapidaFromBatch(lapidasBatch.length - 1, autoScan);
-    }
-
-    btnAddMoreLapidas.addEventListener('click', () => {
-        fileInput.value = '';
-        fileInput.click();
-    });
-
-    // --- ESCANEO PARALELO DE TODAS LAS LÁPIDAS DEL LOTE (3X MÁS RÁPIDO) ---
+    // --- ESCANEO PARALELO DE TODAS LAS LÁPIDAS DEL LOTE ---
     btnScanAllBatch.addEventListener('click', async () => {
         if (isScanning || lapidasBatch.length === 0) return;
 
@@ -485,18 +478,25 @@ document.addEventListener('DOMContentLoaded', () => {
 
         progressBar.style.width = '8%';
         progressPercent.textContent = '8%';
-        statusText.lastChild.textContent = ` Escaneando ${total} lápidas en paralelo...`;
+        statusText.lastChild.textContent = ` Escaneando ${total} lápidas...`;
 
         try {
-            const concurrency = activeEngine === 'gemini' ? 3 : 1;
+            // Concurrencia de 2 para evitar bloqueos por límite de peticiones (429) en cuentas gratuitas
+            const concurrency = activeEngine === 'gemini' ? 2 : 1;
             let cursor = 0;
 
             async function workerLoop() {
                 while (cursor < total) {
                     const idx = cursor++;
                     const item = lapidasBatch[idx];
-                    const result = await processSingleLapidaItem(item, selectedLang);
-                    item.ficha = result.ficha;
+                    try {
+                        const result = await processSingleLapidaItem(item, selectedLang);
+                        item.ficha = result.ficha;
+                    } catch (itemErr) {
+                        console.warn(`Lápida #${idx + 1} usó respaldo local por demora:`, itemErr);
+                        const fallbackText = await recognizeWithTesseractFast(item.dataUrl, selectedLang, false).catch(() => '');
+                        item.ficha = buildFichaFromLocalText(fallbackText);
+                    }
                     completedCount++;
 
                     const pct = Math.round((completedCount / total) * 100);
@@ -511,7 +511,7 @@ document.addEventListener('DOMContentLoaded', () => {
             await Promise.all(workers);
 
             selectLapidaFromBatch(activeLapidaIndex >= 0 ? activeLapidaIndex : 0, false);
-            showToast(`¡Listo! ${total} lápidas procesadas y rellenadas en tiempo récord.`, 'success');
+            showToast(`¡Listo! ${total} lápidas procesadas y rellenadas.`, 'success');
             liveBadge.textContent = `Lote de ${total} lápidas completado`;
         } catch (err) {
             console.error('Error escaneando lote:', err);
@@ -1409,24 +1409,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     const threshold = (sum / (w * h)) * 0.86;
                     for (let i = 0, p = 0; i < data.length; i += 4, p++) {
                         const v = gray[p];
-                        const enhanced = v < threshold - 22 ? 0 : (v > threshold + 18 ? 255 : Math.round(((v - (threshold - 22)) / 40) * 255));
-                        data[i] = enhanced;
-                        data[i + 1] = enhanced;
-                        data[i + 2] = enhanced;
-                    }
-                    ctx.putImageData(imageData, 0, 0);
-                    resolve({ dataUrl: canvas.toDataURL('image/png'), mimeType: 'image/png' });
-                    return;
-                }
-
-                resolve({ dataUrl: canvas.toDataURL('image/jpeg', 0.86), mimeType: 'image/jpeg' });
-            };
-            img.onerror = reject;
-            img.src = imageSrc;
-        });
-    }
-
-    // --- MOTOR 1 ULTRARRÁPIDO: LECTURA + ESTRUCTURACIÓN EN UNA SOLA LLAMADA ---
+    // --- MOTOR 1 ULTRARRÁPIDO: LECTURA + ESTRUCTURACIÓN CON TIMEOUT DE 18S ---
     async function extractAndFillWithGeminiSingleCall(fastImgObj, langCode, apiKey) {
         const langMap = {
             spa: 'español',
@@ -1437,7 +1420,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const targetLanguage = langMap[langCode] || 'español';
         const base64Data = fastImgObj.dataUrl.split(',')[1];
 
-        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
+        // Usamos gemini-2.5-flash sin thinkingBudget para respuesta instantánea (1.5 - 3s)
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
         const prompt = `Lee todo el texto de esta lápida/placa en ${targetLanguage} (incluyendo letra cursiva esculpida, fechas * y †, dedicatorias y códigos de esquina como ##FIL=2 #GAL=1 #PA=29 o #FILA/0 #P0 G0). IMPORTANTE: Si la lápida está vacía o solo tiene escrita o pintada una letra "L" (que significa bóveda Libre/disponible), coloca estado="Libre" y nombre="LIBRE (Bóveda disponible)". Devuelve en JSON tanto la transcripción completa como los campos estructurados para Excel.`;
 
         const payload = {
@@ -1455,6 +1439,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }],
             generationConfig: {
                 temperature: 0.1,
+                thinkingConfig: { thinkingBudget: 0 },
                 responseMimeType: "application/json",
                 responseSchema: {
                     type: "OBJECT",
@@ -1484,15 +1469,30 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         };
 
-        const response = await fetch(apiUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 18000);
+
+        let response;
+        try {
+            response = await fetch(apiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+                signal: controller.signal
+            });
+        } catch (fetchErr) {
+            if (fetchErr.name === 'AbortError') {
+                throw new Error('Tiempo de espera agotado (18s). Revisa tu conexión o clave API.');
+            }
+            throw fetchErr;
+        } finally {
+            clearTimeout(timeoutId);
+        }
 
         if (!response.ok) {
-            const errText = await response.text().catch(() => '');
-            throw new Error(`HTTP ${response.status}: ${errText}`);
+            const errData = await response.json().catch(() => ({}));
+            const apiMsg = errData?.error?.message || `HTTP ${response.status}`;
+            throw new Error(apiMsg);
         }
 
         const result = await response.json();
@@ -1540,7 +1540,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 brightness: item.brightness ?? 100,
                 contrast: item.contrast ?? 100,
                 rotation: item.rotation ?? 0,
-                maxDimension: 1280,
+                maxDimension: 960,
                 applyAdaptivePreprocess: false
             });
             return await extractAndFillWithGeminiSingleCall(fastImg, selectedLang, apiKey);
@@ -1549,7 +1549,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 brightness: item.brightness ?? 100,
                 contrast: item.contrast ?? 100,
                 rotation: item.rotation ?? 0,
-                maxDimension: 1400,
+                maxDimension: 1280,
                 applyAdaptivePreprocess: true
             });
             const text = await recognizeWithTesseractFast(adaptiveImg.dataUrl, selectedLang, false);
@@ -1593,7 +1593,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     brightness: imgBrightness,
                     contrast: imgContrast,
                     rotation: imgRotation,
-                    maxDimension: 1280,
+                    maxDimension: 960,
                     applyAdaptivePreprocess: false
                 });
                 progressBar.style.width = '55%';
@@ -1608,8 +1608,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     progressPercent.textContent = '100%';
                 } catch (aiErr) {
                     console.error('Error con Gemini API:', aiErr);
-                    showToast('Error al conectar con Gemini API. Verifica tu clave API.', 'error');
-                    liveBadge.textContent = 'Error de conexión con Gemini API';
+                    showToast(`Aviso IA: ${aiErr.message}`, 'error');
+                    liveBadge.textContent = `Error API: ${aiErr.message.slice(0, 48)}`;
                     return;
                 }
             } else {
