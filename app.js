@@ -1,5 +1,5 @@
 /**
- * Lector de Imágenes y Escáner OCR Dual Optimizado
+ * Lector de Imágenes con OCR Gemini, Tesseract y PaddleOCR
  * - Lectura y relleno de ficha en 1 sola llamada (máxima velocidad)
  * - Escaneo paralelo del lote de hasta 10 lápidas
  * - Detección automática de placas con marca "L" como Bóveda Libre
@@ -23,9 +23,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnRotate90 = document.getElementById('btnRotate90');
     const btnResetAdjustments = document.getElementById('btnResetAdjustments');
 
-    // Selector de Motor Dual
+    // Selector de motores OCR
     const btnEngineAI = document.getElementById('btnEngineAI');
     const btnEngineClassic = document.getElementById('btnEngineClassic');
+    const btnEngineHandwriting = document.getElementById('btnEngineHandwriting');
+    const engineHint = document.getElementById('engineHint');
 
     const cameraContainer = document.getElementById('cameraContainer');
     const cameraFeed = document.getElementById('cameraFeed');
@@ -99,11 +101,12 @@ document.addEventListener('DOMContentLoaded', () => {
     let isScanning = false;
     let isSpeaking = false;
     let isPaused = false;
-    let activeEngine = 'gemini';
+    let activeEngine = 'paddleocr';
 
     // Worker persistente de Tesseract para evitar recargar diccionario en cada foto
     let cachedTesseractWorker = null;
     let cachedTesseractLang = null;
+    const cachedPaddleOcrPromises = new Map();
 
     // Estado de Lote (Hasta 10 imágenes de lápidas independientes)
     const MAX_LAPIDAS = 10;
@@ -352,6 +355,18 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function removeLapidaFromBatch(index) {
+        if (isScanning) {
+            showToast('Espera a que termine el escaneo para quitar una imagen.', 'info');
+            return;
+        }
+
+        if (index < 0 || index >= lapidasBatch.length) return;
+
+        const removingActive = index === activeLapidaIndex;
+        if (activeLapidaIndex >= 0 && !removingActive) {
+            saveActiveLapidaState();
+        }
+
         lapidasBatch.splice(index, 1);
         if (lapidasBatch.length === 0) {
             activeLapidaIndex = -1;
@@ -373,9 +388,15 @@ document.addEventListener('DOMContentLoaded', () => {
             renderBatchTray();
             return;
         }
-        const nextIndex = Math.min(index, lapidasBatch.length - 1);
-        activeLapidaIndex = -1;
-        selectLapidaFromBatch(nextIndex, false);
+
+        if (removingActive) {
+            const nextIndex = Math.min(index, lapidasBatch.length - 1);
+            activeLapidaIndex = -1;
+            selectLapidaFromBatch(nextIndex, false);
+        } else {
+            if (index < activeLapidaIndex) activeLapidaIndex -= 1;
+            renderBatchTray();
+        }
     }
 
     function readFileAsDataUrl(file) {
@@ -388,6 +409,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function addFilesToBatch(fileList, autoScanFirst = true) {
+        if (isScanning) {
+            showToast('Espera a que termine el escaneo para añadir imágenes.', 'info');
+            return;
+        }
+
         const validImages = Array.from(fileList || []).filter(f => f.type.startsWith('image/'));
         if (validImages.length === 0) {
             showToast('Selecciona archivos de imagen válidos.', 'error');
@@ -430,6 +456,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- CARGA DE IMÁGENES ---
     function loadImageIntoPreview(dataUrl, autoScan = false) {
+        if (isScanning) {
+            showToast('Espera a que termine el escaneo para cambiar la imagen.', 'info');
+            return;
+        }
+
         if (activeLapidaIndex >= 0) {
             saveActiveLapidaState();
         }
@@ -465,7 +496,7 @@ document.addEventListener('DOMContentLoaded', () => {
     btnScanAllBatch.addEventListener('click', async () => {
         if (isScanning || lapidasBatch.length === 0) return;
 
-        const apiKey = getGeminiApiKey();
+        const apiKey = activeEngine === 'gemini' ? getGeminiApiKey() : '';
         if (activeEngine === 'gemini' && !apiKey) {
             showToast('Configura primero tu "Clave API Gemini" arriba para escanear el lote.', 'error');
             apiKeyModal.classList.remove('hidden');
@@ -481,6 +512,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const total = lapidasBatch.length;
         let completedCount = 0;
+        let failedHandwritingCount = 0;
         const selectedLang = languageSelect.value;
 
         progressBar.style.width = '8%';
@@ -500,9 +532,15 @@ document.addEventListener('DOMContentLoaded', () => {
                         const result = await processSingleLapidaItem(item, selectedLang);
                         item.ficha = result.ficha;
                     } catch (itemErr) {
-                        console.warn(`Lápida #${idx + 1} usó respaldo local por demora:`, itemErr);
-                        const fallbackText = await recognizeWithTesseractFast(item.dataUrl, selectedLang, false).catch(() => '');
-                        item.ficha = buildFichaFromLocalText(fallbackText);
+                        console.warn(`No se pudo completar el OCR de la lápida #${idx + 1}:`, itemErr);
+                        if (activeEngine === 'paddleocr') {
+                            failedHandwritingCount++;
+                            const previousFicha = item.ficha || createEmptyFichaState();
+                            item.ficha = { ...previousFicha, extractedText: '', inscripcionCompleta: '', isCompleted: false };
+                        } else {
+                            const fallbackText = await recognizeWithTesseractFast(item.dataUrl, selectedLang, false).catch(() => '');
+                            item.ficha = buildFichaFromLocalText(fallbackText);
+                        }
                     }
                     completedCount++;
 
@@ -518,8 +556,13 @@ document.addEventListener('DOMContentLoaded', () => {
             await Promise.all(workers);
 
             selectLapidaFromBatch(activeLapidaIndex >= 0 ? activeLapidaIndex : 0, false);
-            showToast(`¡Listo! ${total} lápidas procesadas y rellenadas.`, 'success');
-            liveBadge.textContent = `Lote de ${total} lápidas completado`;
+            if (failedHandwritingCount > 0) {
+                showToast(`${failedHandwritingCount} imagen(es) no se pudieron leer con OCR local. Revisa la conexión e inténtalo de nuevo.`, 'error');
+                liveBadge.textContent = `${total - failedHandwritingCount} de ${total} imágenes leídas localmente`;
+            } else {
+                showToast(`¡Listo! ${total} lápidas procesadas y rellenadas.`, 'success');
+                liveBadge.textContent = `Lote de ${total} lápidas completado`;
+            }
         } catch (err) {
             console.error('Error escaneando lote:', err);
             showToast('Ocurrió un error al procesar algunas lápidas del lote.', 'error');
@@ -631,18 +674,32 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    // --- SELECTOR DE MOTOR DUAL Y TAMAÑO DE FUENTE ---
+    // --- SELECTOR DE MOTORES OCR Y TAMAÑO DE FUENTE ---
     function setEngine(engine) {
         activeEngine = engine;
-        if (engine === 'gemini') {
-            btnEngineAI.className = 'engine-tab py-2 px-3 rounded-xl text-xs font-semibold bg-white text-brand-700 shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer';
-            btnEngineClassic.className = 'engine-tab py-2 px-3 rounded-xl text-xs font-medium text-slate-600 hover:text-slate-900 transition-all flex items-center justify-center gap-1.5 cursor-pointer';
-            liveBadge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-brand-600"></span> Motor IA Multimodal Listo (Soporte Cursiva)';
-        } else {
-            btnEngineClassic.className = 'engine-tab py-2 px-3 rounded-xl text-xs font-semibold bg-white text-brand-700 shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer';
-            btnEngineAI.className = 'engine-tab py-2 px-3 rounded-xl text-xs font-medium text-slate-600 hover:text-slate-900 transition-all flex items-center justify-center gap-1.5 cursor-pointer';
-            liveBadge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-sky-600"></span> OCR Clásico con Filtro Adaptativo Listo';
-        }
+        const selectedClass = 'engine-tab py-2 px-3 rounded-xl text-xs font-semibold bg-white text-brand-700 shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer';
+        const idleClass = 'engine-tab py-2 px-3 rounded-xl text-xs font-medium text-slate-600 hover:text-slate-900 transition-all flex items-center justify-center gap-1.5 cursor-pointer';
+
+        [
+            [btnEngineAI, 'gemini'],
+            [btnEngineClassic, 'tesseract'],
+            [btnEngineHandwriting, 'paddleocr']
+        ].forEach(([button, engineName]) => {
+            button.className = engine === engineName ? selectedClass : idleClass;
+        });
+
+        const readyMessages = {
+            gemini: 'Gemini multimodal listo. La imagen se envía a Gemini para su lectura.',
+            tesseract: 'OCR clásico local listo.',
+            paddleocr: 'OCR español para cursiva listo. La lectura se procesa en este navegador.'
+        };
+        const helpMessages = {
+            gemini: 'Gemini necesita una clave API y recibe la imagen para analizarla.',
+            tesseract: 'Procesamiento local; funciona mejor con texto impreso.',
+            paddleocr: 'La primera vez descarga el modelo. La imagen se procesa en este navegador y no requiere clave de Gemini.'
+        };
+        liveBadge.textContent = readyMessages[engine] || readyMessages.paddleocr;
+        engineHint.textContent = helpMessages[engine] || helpMessages.paddleocr;
     }
 
     document.querySelectorAll('.font-size-btn').forEach(btn => {
@@ -660,6 +717,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     btnEngineAI.addEventListener('click', () => setEngine('gemini'));
     btnEngineClassic.addEventListener('click', () => setEngine('tesseract'));
+    btnEngineHandwriting.addEventListener('click', () => setEngine('paddleocr'));
+    setEngine('paddleocr');
     extractedText.addEventListener('input', updateWordCount);
 
     // --- GESTIÓN DE LA FICHA INDIVIDUAL (DATOS PARA EXCEL) ---
@@ -738,15 +797,45 @@ document.addEventListener('DOMContentLoaded', () => {
         showToast('Persona eliminada de la ficha.', 'info');
     });
 
-    // Helper para detectar si la placa tiene únicamente la marca "L" (bóveda libre)
+    // Parse the watermark separately from the engraved inscription.
+    const WATERMARK_TOKEN_PATTERN = /#{0,2}\s*(?:FILA?|GAL|PA)\s*(?:[=/:]\s*)?\d+|#{0,2}\s*[PG]\s*\d+/gi;
+
+    function extractWatermarkCode(rawText) {
+        const tokens = [];
+        const seen = new Set();
+        for (const match of String(rawText || '').matchAll(WATERMARK_TOKEN_PATTERN)) {
+            const token = match[0].trim().replace(/\s*([=/:])\s*/g, '$1').replace(/\s+/g, '').toUpperCase();
+            if (token && !seen.has(token)) {
+                seen.add(token);
+                tokens.push(token);
+            }
+        }
+
+        const hasFila = tokens.some(token => /^#{0,2}FILA?\s*[=/:]?\s*\d+$/i.test(token));
+        const hasPositionAndGallery = tokens.some(token => /^#{0,2}P\d+$/i.test(token))
+            && tokens.some(token => /^#{0,2}G\d+$/i.test(token));
+        return hasFila || hasPositionAndGallery ? tokens.join(' ') : '';
+    }
+
+    function removePhotoWatermarkArtifacts(rawText) {
+        return String(rawText || '').split(/\r?\n/).map(line => {
+            if (/\b(?:Bogot[a\u00e1]|Calle|Carrera|Sur|Norte|Antonio\s+Nari[n\u00f1]o|D\.\s*C\.)/i.test(line)) return '';
+            if (/\b\d{1,2}\s+(?:ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic|jan|apr|aug|dec)\.?\s+\d{4}\s+\d{1,2}:\d{2}(?::\d{2})?/i.test(line)) return '';
+            return line.replace(WATERMARK_TOKEN_PATTERN, ' ').trim();
+        }).filter(Boolean).join('\n').trim();
+    }
+
+    // Ignore the photo watermark, camera address/date, and a niche's numeric label.
     function isFreeVaultMarker(rawText) {
-        const cleaned = (rawText || '')
-            .replace(/#{1,2}FIL[^\n]+/gi, '')
-            .replace(/\d{1,2}\s+[a-z]{3,10}\s+\d{4}\s+\d{1,2}:\d{2}(?::\d{2})?/gi, '')
-            .replace(/(?:Bogotá|Calle|Carrera|Sur|Norte|Antonio Nariño|D\.C\.|GAL=|PA=)[^\n]*/gi, '')
-            .replace(/[^A-Za-zÁÉÍÓÚÑáéíóúñ0-9]/g, '')
-            .trim();
-        return /^L$/i.test(cleaned) || /^LIBRE$/i.test(cleaned);
+        const body = removePhotoWatermarkArtifacts(rawText)
+            .split(/\r?\n/)
+            .filter(line => !/^\s*\d{1,5}\s*$/.test(line))
+            .join(' ')
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^A-Za-z]/g, '')
+            .toUpperCase();
+        return body === 'L' || body === 'LIBRE';
     }
 
     // Extractor inteligente local (devuelve objeto estructurado sin tocar el DOM directamente)
@@ -755,67 +844,79 @@ document.addEventListener('DOMContentLoaded', () => {
         const ficha = createEmptyFichaState();
         if (!text) return ficha;
 
-        const codeMatch = text.match(/#{1,2}FIL[^\n]+/i);
-        if (codeMatch) ficha.codigoOriginal = codeMatch[0].trim();
+        const watermarkCode = extractWatermarkCode(text);
+        if (watermarkCode) ficha.codigoOriginal = watermarkCode;
+        const inscriptionText = removePhotoWatermarkArtifacts(text);
 
-        // Si la lápida solo contiene la letra "L", marcar automáticamente como bóveda libre
         if (isFreeVaultMarker(text)) {
             ficha.estado = 'Libre';
-            ficha.peopleRecords = [{
-                nombre: 'LIBRE (Bóveda disponible)',
-                nacimiento: '',
-                fallecimiento: '',
-                edad: '',
-                dedicatoria: ''
-            }];
-            ficha.inscripcionCompleta = text;
+            ficha.peopleRecords = [{ nombre: 'LIBRE (B\u00f3veda disponible)', nacimiento: '', fallecimiento: '', edad: '', dedicatoria: '' }];
+            ficha.inscripcionCompleta = inscriptionText || 'L';
             ficha.extractedText = text;
             ficha.isCompleted = true;
             return ficha;
         }
 
-        const serialMatch = text.match(/(?:Serial|N[°ºo]\.?|Ref\.?)\s*:?\s*([A-Z0-9\-\/]+)/i);
-        if (serialMatch) ficha.serialManual = serialMatch[1].trim();
+        const serialMatch = inscriptionText.match(/(?:\bSerial\b|\bRef\.?)\s*:?\s*([A-Z0-9\-\/]+)|\bN(?:[\u00b0\u00ba]|o)\.?(?=\s|[:#]|\d)\s*[:#]?\s*([A-Z0-9\-\/]+)|\bN\.(?=\s|[:#]|\d)\s*[:#]?\s*([A-Z0-9\-\/]+)/i);
+        if (serialMatch) ficha.serialManual = (serialMatch[1] || serialMatch[2] || serialMatch[3]).trim();
 
         let nacimiento = '';
         let fallecimiento = '';
-        const nacMatch = text.match(/(?:N\.|Nac\.?|Nacimiento|\*)\s*:?\s*(\d{1,2}\s*[-–\/\.]\s*[A-Za-zÁÉÍÓÚáéíóú0-9]+\.?\s*[-–\/\.]\s*\d{2,4}|\d{4})/i);
-        const falMatch = text.match(/(?:F\.|Fall\.?|Fallecimiento|\+|†|Q\.E\.P\.D\.?)\s*:?\s*(\d{1,2}\s*[-–\/\.]\s*[A-Za-zÁÉÍÓÚáéíóú0-9]+\.?\s*[-–\/\.]\s*\d{2,4}|\d{4})/i);
-
+        const nacMatch = inscriptionText.match(/(?:N\.|Nac\.?|Nacimiento|\*)\s*:?\s*(\d{1,2}\s*[-\u2013\u2014\/.]\s*[A-Za-z\u00c0-\u024f0-9]+\.?\s*[-\u2013\u2014\/.]\s*\d{2,4}|\d{4})/i);
+        const falMatch = inscriptionText.match(/(?:F\.|Fall\.?|Fallecimiento|\+|\u2020|Q\.E\.P\.D\.?)\s*:?\s*(\d{1,2}\s*[-\u2013\u2014\/.]\s*[A-Za-z\u00c0-\u024f0-9]+\.?\s*[-\u2013\u2014\/.]\s*\d{2,4}|\d{4})/i);
         if (nacMatch) nacimiento = nacMatch[1].trim();
         if (falMatch) fallecimiento = falMatch[1].trim();
 
         if (!nacimiento && !fallecimiento) {
-            const rangeMatch = text.match(/\b(1[89]\d{2}|20[0-2]\d)\s*[-–—]\s*(1[89]\d{2}|20[0-2]\d)\b/);
+            const rangeMatch = inscriptionText.match(/\b(1[89]\d{2}|20[0-2]\d)\s*[-\u2013\u2014]\s*(1[89]\d{2}|20[0-2]\d)\b/);
             if (rangeMatch) {
                 nacimiento = rangeMatch[1];
                 fallecimiento = rangeMatch[2];
             }
         }
 
-        let edad = '';
-        const edadMatch = text.match(/(?:Edad\s*:?\s*)?(\d{1,3}\s*a[ñn]os)/i);
-        if (edadMatch) edad = edadMatch[1];
+        if (!nacimiento && !fallecimiento) {
+            const dateMatches = inscriptionText.match(/\b\d{1,2}\s*[-\u2013\u2014/.]\s*(?:\d{1,2}|[A-Za-z\u00c0-\u024f]+\.?)\s*[-\u2013\u2014/.]\s*\d{2,4}\b|\b\d{1,2}\s+[A-Za-z\u00c0-\u024f]+\.?\s+\d{2,4}\b|\b\d{4}\b/gi) || [];
+            if (dateMatches.length === 2) {
+                nacimiento = dateMatches[0].trim();
+                fallecimiento = dateMatches[1].trim();
+            }
+        }
 
-        let dedicatoria = '';
-        const dedMatch = text.match(/(Recuerdo de[^\n]+|En memoria de[^\n]+|Descansa en paz[^\n]*|Siempre te recordaremos[^\n]*|Con amor[^\n]*)/i);
-        if (dedMatch) dedicatoria = dedMatch[1].trim();
-
-        const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+        const edadMatch = inscriptionText.match(/(?:Edad\s*:?\s*)?(\d{1,3}\s*a[\u00f1n]os)/i);
+        const dedMatch = inscriptionText.match(/(Recuerdo de[^\n]+|En memoria de[^\n]+|Descansa en paz[^\n]*|Siempre te recordaremos[^\n]*|Con amor[^\n]*)/i);
+        const lines = inscriptionText.split('\n').map(line => line.trim()).filter(Boolean);
+        const fieldLines = lines.map(line => line
+            .replace(/(?:Nacimiento|Nac\.?|Fallecimiento|Fall\.?|Edad)\s*:?\s*/gi, ' ')
+            .replace(/[\*+\u2020]/g, ' ')
+            .replace(/\b\d{1,2}\s*[-\u2013\u2014/.]\s*(?:\d{1,2}|[A-Za-z\u00c0-\u024f]+\.?)\s*[-\u2013\u2014/.]\s*\d{2,4}\b|\b\d{1,2}\s+[A-Za-z\u00c0-\u024f]+\.?\s+\d{2,4}\b|\b\d{4}\b/gi, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()).filter(Boolean);
         let nombre = '';
-        for (const line of lines) {
-            if (/^#{1,2}FIL/i.test(line)) continue;
-            if (/^(Serial|N[°º]|Nac|Fall|Edad|Recuerdo|En memoria|Q\.E\.P\.D)/i.test(line)) continue;
-            if (/^[\*\+†\d]/.test(line)) continue;
-            if (line.length >= 4 && /[A-Za-zÁÉÍÓÚÑáéíóúñ]{3,}/.test(line)) {
+        const nameSkipPattern = /^(Serial\b|Ref\b|Nac\b|Fall\b|Nacimiento\b|Fallecimiento\b|Edad\b|Recuerdo\b|En memoria\b|Descansa en paz\b|Siempre te recordaremos\b|Con amor\b|Padre y abuelo\b)/i;
+        for (const line of fieldLines) {
+            if (nameSkipPattern.test(line)) continue;
+            if (/^[\*+\u2020\d]/.test(line)) continue;
+            if (line.length >= 4 && /[A-Za-z\u00c0-\u024f]{3,}/.test(line)) {
                 nombre = line;
                 break;
             }
         }
 
-        ficha.peopleRecords = [{ nombre, nacimiento, fallecimiento, edad, dedicatoria }];
+        const dedicationLines = fieldLines.filter(line => line !== nombre
+            && !/^(?:Serial\b|Ref\b|N[\u00b0\u00ba o]?\s*[:.]?\s*\d|Nac\b|Fall\b|Nacimiento\b|Fallecimiento\b|Edad\b)/i.test(line)
+            && !/^\d+$/.test(line)
+            && /[A-Za-z\u00c0-\u024f]{3,}/.test(line));
+        const dedicatoria = dedicationLines.join(' ').trim() || (dedMatch ? dedMatch[1].trim() : '');
+        ficha.peopleRecords = [{
+            nombre,
+            nacimiento,
+            fallecimiento,
+            edad: edadMatch ? edadMatch[1] : '',
+            dedicatoria
+        }];
         ficha.estado = 'Legible';
-        ficha.inscripcionCompleta = text;
+        ficha.inscripcionCompleta = inscriptionText;
         ficha.extractedText = text;
         ficha.isCompleted = true;
         return ficha;
@@ -824,43 +925,36 @@ document.addEventListener('DOMContentLoaded', () => {
     function buildFichaFromGeminiObject(parsed, fallbackText) {
         const base = buildFichaFromLocalText(fallbackText);
         if (!parsed || typeof parsed !== 'object') return base;
-        if (parsed.codigoOriginal && parsed.codigoOriginal.trim()) {
-            base.codigoOriginal = parsed.codigoOriginal.trim();
-        }
-        if (parsed.serialManual) {
-            base.serialManual = parsed.serialManual.trim();
-        }
 
-        // Verificar si la IA detectó bóveda libre ("L" o "Libre")
+        if (parsed.codigoOriginal && parsed.codigoOriginal.trim()) {
+            base.codigoOriginal = extractWatermarkCode(parsed.codigoOriginal) || parsed.codigoOriginal.trim();
+        }
+        if (parsed.serialManual) base.serialManual = parsed.serialManual.trim();
+
         const aiEstado = (parsed.estado || '').trim();
         const firstNombre = Array.isArray(parsed.personas) && parsed.personas[0]
             ? (parsed.personas[0].nombre || '').trim()
             : '';
         if (/^libre$/i.test(aiEstado) || /^l$/i.test(firstNombre) || isFreeVaultMarker(fallbackText)) {
             base.estado = 'Libre';
-            base.peopleRecords = [{
-                nombre: 'LIBRE (Bóveda disponible)',
-                nacimiento: '',
-                fallecimiento: '',
-                edad: '',
-                dedicatoria: ''
-            }];
-            base.inscripcionCompleta = (parsed.inscripcionCompleta || fallbackText || 'L — Bóveda Libre').trim();
+            base.peopleRecords = [{ nombre: 'LIBRE (B\u00f3veda disponible)', nacimiento: '', fallecimiento: '', edad: '', dedicatoria: '' }];
+            const freeText = parsed.inscripcionCompleta || fallbackText || 'L - B\u00f3veda Libre';
+            base.inscripcionCompleta = removePhotoWatermarkArtifacts(freeText) || 'L';
             base.isCompleted = true;
             return base;
         }
 
         if (Array.isArray(parsed.personas) && parsed.personas.length > 0) {
-            base.peopleRecords = parsed.personas.map(p => ({
-                nombre: p.nombre || '',
-                nacimiento: p.nacimiento || '',
-                fallecimiento: p.fallecimiento || '',
-                edad: p.edad || '',
-                dedicatoria: p.dedicatoria || ''
+            base.peopleRecords = parsed.personas.map(person => ({
+                nombre: person.nombre || '',
+                nacimiento: person.nacimiento || '',
+                fallecimiento: person.fallecimiento || '',
+                edad: person.edad || '',
+                dedicatoria: person.dedicatoria || ''
             }));
         }
         if (parsed.inscripcionCompleta) {
-            base.inscripcionCompleta = parsed.inscripcionCompleta.trim();
+            base.inscripcionCompleta = removePhotoWatermarkArtifacts(parsed.inscripcionCompleta) || parsed.inscripcionCompleta.trim();
         }
         base.isCompleted = true;
         return base;
@@ -1445,7 +1539,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Modelos vigentes recomendados por Google AI Studio con respaldo automático
         const candidateModels = ['gemini-3.8-flash', 'gemini-3-flash-preview', 'gemini-2.5-pro'];
-        const prompt = `Lee todo el texto de esta lápida/placa en ${targetLanguage} (incluyendo letra cursiva esculpida, fechas * y †, dedicatorias y códigos de esquina como ##FIL=2 #GAL=1 #PA=29 o #FILA/0 #P0 G0). IMPORTANTE: Si la lápida está vacía o solo tiene escrita o pintada una letra "L" (que significa bóveda Libre/disponible), coloca estado="Libre" y nombre="LIBRE (Bóveda disponible)". Devuelve en JSON tanto la transcripción completa como los campos estructurados para Excel.`;
+        const prompt = `Lee el texto visible de la lapida en ${targetLanguage}, incluyendo letra cursiva, fechas, dedicatorias y marcas de agua como #FILA/0 #P0 G0 o ##FIL=2 #GAL=1 #PA=29. Guarda los codigos de marca de agua en codigoOriginal; excluye fecha y direccion superpuestas de inscripcionCompleta. Si, despues de separar marca de agua, fecha y direccion, solo queda una L independiente (aunque haya un numero de lapida), usa estado="Libre". No marques como libre una letra L que aparezca dentro de un nombre o dedicatoria. Devuelve JSON con la transcripcion completa y los campos estructurados para Excel.`;
 
         const payload = {
             contents: [{
@@ -1571,9 +1665,61 @@ document.addEventListener('DOMContentLoaded', () => {
         return text.trim();
     }
 
+    // OCR de escritura a mano en español. El modelo se descarga una vez y procesa la imagen en el navegador.
+    async function getPaddleOcrEngine(langCode = 'spa') {
+        const langMap = { spa: 'es', eng: 'en', fra: 'fr', por: 'pt' };
+        const modelLanguage = langMap[langCode] || 'es';
+        if (!cachedPaddleOcrPromises.has(modelLanguage)) {
+            const enginePromise = import('https://cdn.jsdelivr.net/npm/@paddleocr/paddleocr-js@0.4.2/+esm')
+                .then(({ PaddleOCR }) => {
+                    if (!PaddleOCR) throw new Error('No se encontró el motor PaddleOCR.');
+                    return PaddleOCR.create({
+                        lang: modelLanguage,
+                        ocrVersion: 'PP-OCRv6',
+                        ortOptions: {
+                            backend: 'wasm',
+                            wasmPaths: 'https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/',
+                            numThreads: 1,
+                            simd: true
+                        }
+                    });
+                })
+                .catch((error) => {
+                    cachedPaddleOcrPromises.delete(modelLanguage);
+                    throw new Error(`No se pudo cargar el OCR local. Revisa tu conexión e inténtalo de nuevo. ${error.message}`);
+                });
+            cachedPaddleOcrPromises.set(modelLanguage, enginePromise);
+        }
+        return cachedPaddleOcrPromises.get(modelLanguage);
+    }
+
+    async function recognizeWithPaddleOcr(imageDataUrl, langCode = 'spa', updateProgress = false) {
+        if (updateProgress) statusText.lastChild.textContent = ' Cargando OCR local para cursiva...';
+        const ocr = await getPaddleOcrEngine(langCode);
+        const image = await new Promise((resolve, reject) => {
+            const element = new Image();
+            element.onload = () => resolve(element);
+            element.onerror = () => reject(new Error('No se pudo preparar la imagen para el OCR local.'));
+            element.src = imageDataUrl;
+        });
+
+        if (updateProgress) statusText.lastChild.textContent = ' Leyendo las líneas visibles de la imagen...';
+        const [result] = await ocr.predict(image);
+        const items = Array.isArray(result?.items) ? result.items : [];
+        const lines = items
+            .map(item => ({
+                text: String(item?.text || '').trim(),
+                top: Math.min(...(item?.poly || []).map(point => Array.isArray(point) ? Number(point[1]) : Number(point?.y)).filter(Number.isFinite))
+            }))
+            .filter(item => item.text)
+            .sort((a, b) => (Number.isFinite(a.top) ? a.top : 0) - (Number.isFinite(b.top) ? b.top : 0));
+
+        return lines.map(item => item.text).join('\n').trim();
+    }
+
     // Procesa un elemento individual del lote (usado tanto por individual como por lote paralelo)
     async function processSingleLapidaItem(item, selectedLang) {
-        const apiKey = getGeminiApiKey();
+        const apiKey = activeEngine === 'gemini' ? getGeminiApiKey() : '';
         if (activeEngine === 'gemini' && apiKey) {
             const fastImg = await prepareFastImageDataUrl(item.dataUrl, {
                 brightness: item.brightness ?? 100,
@@ -1583,6 +1729,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 applyAdaptivePreprocess: false
             });
             return await extractAndFillWithGeminiSingleCall(fastImg, selectedLang, apiKey);
+        } else if (activeEngine === 'paddleocr') {
+            const handwritingImage = await prepareFastImageDataUrl(item.dataUrl, {
+                brightness: item.brightness ?? 100,
+                contrast: item.contrast ?? 100,
+                rotation: item.rotation ?? 0,
+                maxDimension: 2200,
+                applyAdaptivePreprocess: false
+            });
+            const text = await recognizeWithPaddleOcr(handwritingImage.dataUrl, selectedLang);
+            return { text, ficha: buildFichaFromLocalText(text) };
         } else {
             const adaptiveImg = await prepareFastImageDataUrl(item.dataUrl, {
                 brightness: item.brightness ?? 100,
@@ -1601,7 +1757,7 @@ document.addEventListener('DOMContentLoaded', () => {
     async function runOCRProcess() {
         if (!currentImageSource || isScanning) return;
 
-        const apiKey = getGeminiApiKey();
+        const apiKey = activeEngine === 'gemini' ? getGeminiApiKey() : '';
         if (activeEngine === 'gemini' && !apiKey) {
             showToast('Falta tu Clave API de Gemini: pégala en el botón verde superior para leer cursiva.', 'error');
             liveBadge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span> Configura tu Clave API Gemini arriba para activar IA';
@@ -1620,8 +1776,10 @@ document.addEventListener('DOMContentLoaded', () => {
         progressPercent.textContent = '20%';
         statusText.lastChild.textContent = ' Optimizando imagen...';
         liveBadge.textContent = activeEngine === 'gemini'
-            ? 'IA Multimodal analizando lápida y ficha...'
-            : 'OCR Clásico procesando imagen...';
+            ? 'Gemini multimodal analizando la imagen...'
+            : activeEngine === 'paddleocr'
+                ? 'OCR español local leyendo la imagen...'
+                : 'OCR clásico local procesando la imagen...';
 
         try {
             let finalExtracted = '';
@@ -1651,6 +1809,20 @@ document.addEventListener('DOMContentLoaded', () => {
                     liveBadge.textContent = `Error API: ${aiErr.message.slice(0, 48)}`;
                     return;
                 }
+            } else if (activeEngine === 'paddleocr') {
+                const handwritingImage = await prepareFastImageDataUrl(currentImageSource, {
+                    brightness: imgBrightness,
+                    contrast: imgContrast,
+                    rotation: imgRotation,
+                    maxDimension: 2200,
+                    applyAdaptivePreprocess: false
+                });
+                progressBar.style.width = '40%';
+                progressPercent.textContent = '40%';
+                finalExtracted = await recognizeWithPaddleOcr(handwritingImage.dataUrl, selectedLang, true);
+                finalFicha = buildFichaFromLocalText(finalExtracted);
+                progressBar.style.width = '100%';
+                progressPercent.textContent = '100%';
             } else {
                 const adaptiveImgObj = await prepareFastImageDataUrl(currentImageSource, {
                     brightness: imgBrightness,
@@ -1678,6 +1850,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (finalFicha?.estado === 'Libre') {
                     showToast('Placa con "L" detectada: marcada automáticamente como Bóveda Libre.', 'info');
                     liveBadge.textContent = 'Bóveda Libre (L) detectada';
+                } else if (activeEngine === 'paddleocr') {
+                    showToast('OCR local completado. Revisa nombres y fechas antes de exportar.', 'success');
+                    liveBadge.textContent = 'OCR español local completado';
                 } else {
                     showToast('¡Texto transcrito y ficha rellenada al instante!', 'success');
                     liveBadge.textContent = 'Transcripción y Ficha completadas';
@@ -1691,7 +1866,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
         } catch (error) {
             console.error('Error en el proceso OCR:', error);
-            showToast('Ocurrió un error al procesar la imagen.', 'error');
+            const errorMessage = error?.message || 'No se pudo procesar la imagen.';
+            showToast(errorMessage.length > 120 ? `${errorMessage.slice(0, 117)}...` : errorMessage, 'error');
             liveBadge.textContent = 'Error en el escaneo';
         } finally {
             isScanning = false;
@@ -1878,9 +2054,7 @@ document.addEventListener('DOMContentLoaded', () => {
         btnClearBoveda.classList.add('hidden');
         bovedaUploadLabel.textContent = 'Subir Foto Bóveda';
 
-        liveBadge.textContent = activeEngine === 'gemini'
-            ? 'Motor IA Multimodal Listo (Soporte Cursiva)'
-            : 'OCR Clásico con Filtro Adaptativo Listo';
+        setEngine(activeEngine);
         showToast('Área de trabajo y ficha limpias.', 'info');
     });
 });
