@@ -1,6 +1,9 @@
 /**
- * Lector de Imágenes y Escáner OCR Dual con Soporte de Lote (10 Lápidas) y PDF Individual
- * Archivo: app.js
+ * Lector de Imágenes y Escáner OCR Dual Optimizado
+ * - Lectura y relleno de ficha en 1 sola llamada (máxima velocidad)
+ * - Escaneo paralelo del lote de hasta 10 lápidas
+ * - Detección automática de placas con marca "L" como Bóveda Libre
+ * - Exportación a Excel (.CSV) y PDF Individual de 2 Hojas
  */
 document.addEventListener('DOMContentLoaded', () => {
     // Referencias a elementos del DOM
@@ -24,14 +27,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnEngineAI = document.getElementById('btnEngineAI');
     const btnEngineClassic = document.getElementById('btnEngineClassic');
 
-    // Cámara
     const cameraContainer = document.getElementById('cameraContainer');
     const cameraFeed = document.getElementById('cameraFeed');
     const btnStartCamera = document.getElementById('btnStartCamera');
     const btnCapturePhoto = document.getElementById('btnCapturePhoto');
     const btnStopCamera = document.getElementById('btnStopCamera');
 
-    // Botones de ejemplo y API Key
     const btnLoadSample = document.getElementById('btnLoadSample');
     const btnLoadTechSample = document.getElementById('btnLoadTechSample');
     const btnOpenApiKeyModal = document.getElementById('btnOpenApiKeyModal');
@@ -42,8 +43,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnSaveApiKey = document.getElementById('btnSaveApiKey');
     const btnRemoveApiKey = document.getElementById('btnRemoveApiKey');
     const personalApiKeyInput = document.getElementById('personalApiKeyInput');
-
-    // Progreso y resultado OCR
     const btnScanNow = document.getElementById('btnScanNow');
     const progressWrapper = document.getElementById('progressWrapper');
     const progressBar = document.getElementById('progressBar');
@@ -60,14 +59,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnDownload = document.getElementById('btnDownload');
     const btnClearAll = document.getElementById('btnClearAll');
 
-    // Lectura en voz alta
     const btnSpeakToggle = document.getElementById('btnSpeakToggle');
     const btnStopSpeech = document.getElementById('btnStopSpeech');
     const speakLabel = document.getElementById('speakLabel');
     const iconPlay = document.getElementById('iconPlay');
     const iconPause = document.getElementById('iconPause');
 
-    // Ficha Individual (Datos para Excel y PDF)
+    // Referencias de la Ficha Individual (Datos para Excel)
     const fichaSubtitleLabel = document.getElementById('fichaSubtitleLabel');
     const fichaStatusBadge = document.getElementById('fichaStatusBadge');
     const btnAutoFillFromText = document.getElementById('btnAutoFillFromText');
@@ -79,7 +77,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnClearBoveda = document.getElementById('btnClearBoveda');
     const bovedaPreviewBox = document.getElementById('bovedaPreviewBox');
     const bovedaImagePreview = document.getElementById('bovedaImagePreview');
-
     const fieldCodigoOriginal = document.getElementById('fieldCodigoOriginal');
     const fieldSerialManual = document.getElementById('fieldSerialManual');
     const fieldEstado = document.getElementById('fieldEstado');
@@ -104,6 +101,10 @@ document.addEventListener('DOMContentLoaded', () => {
     let isPaused = false;
     let activeEngine = 'gemini';
 
+    // Worker persistente de Tesseract para evitar recargar diccionario en cada foto
+    let cachedTesseractWorker = null;
+    let cachedTesseractLang = null;
+
     // Estado de Lote (Hasta 10 imágenes de lápidas independientes)
     const MAX_LAPIDAS = 10;
     let lapidasBatch = [];
@@ -120,7 +121,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let imgContrast = 100;
     let imgRotation = 0;
 
-    // Estado estructurado de la Ficha Individual (soporta múltiples personas)
+    // Estado estructurado de la Ficha Individual
     let peopleRecords = [
         { nombre: '', nacimiento: '', fallecimiento: '', edad: '', dedicatoria: '' }
     ];
@@ -139,7 +140,7 @@ document.addEventListener('DOMContentLoaded', () => {
             btnOpenApiKeyModal.className = 'inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold text-emerald-800 bg-emerald-100/90 hover:bg-emerald-200/80 border border-emerald-300 px-3.5 py-2 rounded-xl transition-all active:scale-95 cursor-pointer';
         } else {
             apiKeyBtnLabel.textContent = 'Clave API Gemini';
-            btnOpenApiKeyModal.className = 'inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold text-slate-700 bg-slate-100/90 hover:bg-emerald-50 border border-slate-200/80 px-3.5 py-2 rounded-xl transition-all active:scale-95 cursor-pointer';
+            btnOpenApiKeyModal.className = 'inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold text-amber-900 bg-amber-100/90 hover:bg-amber-200/80 border border-amber-300 px-3.5 py-2 rounded-xl transition-all active:scale-95 cursor-pointer';
         }
     }
 
@@ -159,7 +160,7 @@ document.addEventListener('DOMContentLoaded', () => {
         localStorage.setItem(API_KEY_STORAGE, val);
         refreshApiKeyButtonUI();
         apiKeyModal.classList.add('hidden');
-        showToast('Clave API personal guardada correctamente.', 'success');
+        showToast('Clave API personal guardada. Escaneo rápido activado.', 'success');
     });
     btnRemoveApiKey.addEventListener('click', () => {
         localStorage.removeItem(API_KEY_STORAGE);
@@ -188,7 +189,7 @@ document.addEventListener('DOMContentLoaded', () => {
         clearTimeout(window.__toastTimer);
         window.__toastTimer = setTimeout(() => {
             toast.classList.add('translate-y-20', 'opacity-0');
-        }, 3200);
+        }, 3500);
     }
 
     function updateWordCount() {
@@ -248,7 +249,7 @@ document.addEventListener('DOMContentLoaded', () => {
             activePersonIndex: activePersonIndex,
             inscripcionCompleta: fieldInscripcionCompleta.value,
             extractedText: extractedText.value,
-            isCompleted: fichaStatusBadge.textContent === 'Autocompletado'
+            isCompleted: fichaStatusBadge.textContent !== 'Pendiente'
         };
     }
 
@@ -271,7 +272,8 @@ document.addEventListener('DOMContentLoaded', () => {
             cell.className = `relative group aspect-square rounded-xl overflow-hidden border-2 cursor-pointer transition-all ${
                 isActive ? 'border-brand-600 ring-2 ring-brand-500/30 scale-[1.03]' : 'border-slate-300/80 hover:border-brand-400 opacity-85 hover:opacity-100'
             }`;
-            cell.title = `Lápida ${idx + 1}${item.ficha?.isCompleted ? ' (Escaneada)' : ' (Pendiente)'}`;
+            const isFreeVault = item.ficha?.estado === 'Libre';
+            cell.title = `Lápida ${idx + 1}${isFreeVault ? ' (Libre - L)' : item.ficha?.isCompleted ? ' (Escaneada)' : ' (Pendiente)'}`;
 
             const img = document.createElement('img');
             img.src = item.dataUrl;
@@ -281,9 +283,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const numBadge = document.createElement('span');
             numBadge.className = `absolute bottom-0.5 left-0.5 text-[9px] font-extrabold px-1 rounded ${
+                isFreeVault ? 'bg-sky-600 text-white' :
                 item.ficha?.isCompleted ? 'bg-emerald-600 text-white' : 'bg-slate-900/80 text-white'
             }`;
-            numBadge.textContent = `${idx + 1}`;
+            numBadge.textContent = isFreeVault ? `${idx + 1}·L` : `${idx + 1}`;
             cell.appendChild(numBadge);
 
             const delBtn = document.createElement('button');
@@ -339,7 +342,7 @@ document.addEventListener('DOMContentLoaded', () => {
         fieldInscripcionCompleta.value = f.inscripcionCompleta || '';
         extractedText.value = f.extractedText || '';
         updateWordCount();
-        updateFichaStatusBadge(Boolean(f.isCompleted));
+        updateFichaStatusBadge(Boolean(f.isCompleted), f.estado);
 
         renderBatchTray();
 
@@ -421,7 +424,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         selectLapidaFromBatch(startIdx, autoScanFirst);
         if (filesToLoad.length > 1) {
-            showToast(`${filesToLoad.length} lápidas cargadas. Usa "Escanear Todas" para procesar cada una.`, 'success');
+            showToast(`${filesToLoad.length} lápidas cargadas. Usa "Escanear Todas" para procesarlas en paralelo.`, 'success');
         }
     }
 
@@ -458,15 +461,68 @@ document.addEventListener('DOMContentLoaded', () => {
         fileInput.click();
     });
 
+    // --- ESCANEO PARALELO DE TODAS LAS LÁPIDAS DEL LOTE (3X MÁS RÁPIDO) ---
     btnScanAllBatch.addEventListener('click', async () => {
         if (isScanning || lapidasBatch.length === 0) return;
-        saveActiveLapidaState();
-        showToast(`Escaneando individualmente ${lapidasBatch.length} lápidas...`, 'info');
-        for (let i = 0; i < lapidasBatch.length; i++) {
-            selectLapidaFromBatch(i, false);
-            await runOCRProcess();
+
+        const apiKey = getGeminiApiKey();
+        if (activeEngine === 'gemini' && !apiKey) {
+            showToast('Configura primero tu "Clave API Gemini" arriba para escanear el lote.', 'error');
+            apiKeyModal.classList.remove('hidden');
+            return;
         }
-        showToast(`¡Listo! Las ${lapidasBatch.length} fichas individuales fueron rellenadas.`, 'success');
+
+        saveActiveLapidaState();
+        isScanning = true;
+        btnScanNow.disabled = true;
+        btnScanAllBatch.disabled = true;
+        scannerLaser.classList.remove('hidden');
+        progressWrapper.classList.remove('hidden');
+
+        const total = lapidasBatch.length;
+        let completedCount = 0;
+        const selectedLang = languageSelect.value;
+
+        progressBar.style.width = '8%';
+        progressPercent.textContent = '8%';
+        statusText.lastChild.textContent = ` Escaneando ${total} lápidas en paralelo...`;
+
+        try {
+            const concurrency = activeEngine === 'gemini' ? 3 : 1;
+            let cursor = 0;
+
+            async function workerLoop() {
+                while (cursor < total) {
+                    const idx = cursor++;
+                    const item = lapidasBatch[idx];
+                    const result = await processSingleLapidaItem(item, selectedLang);
+                    item.ficha = result.ficha;
+                    completedCount++;
+
+                    const pct = Math.round((completedCount / total) * 100);
+                    progressBar.style.width = `${pct}%`;
+                    progressPercent.textContent = `${pct}%`;
+                    statusText.lastChild.textContent = ` Completadas ${completedCount} de ${total} lápidas...`;
+                    renderBatchTray();
+                }
+            }
+
+            const workers = Array.from({ length: Math.min(concurrency, total) }, () => workerLoop());
+            await Promise.all(workers);
+
+            selectLapidaFromBatch(activeLapidaIndex >= 0 ? activeLapidaIndex : 0, false);
+            showToast(`¡Listo! ${total} lápidas procesadas y rellenadas en tiempo récord.`, 'success');
+            liveBadge.textContent = `Lote de ${total} lápidas completado`;
+        } catch (err) {
+            console.error('Error escaneando lote:', err);
+            showToast('Ocurrió un error al procesar algunas lápidas del lote.', 'error');
+        } finally {
+            isScanning = false;
+            btnScanNow.disabled = false;
+            btnScanAllBatch.disabled = false;
+            scannerLaser.classList.add('hidden');
+            setTimeout(() => progressWrapper.classList.add('hidden'), 800);
+        }
     });
 
     fileInput.addEventListener('change', (e) => {
@@ -634,8 +690,12 @@ document.addEventListener('DOMContentLoaded', () => {
         renderPersonSelector();
     }
 
-    function updateFichaStatusBadge(isCompleted) {
-        if (isCompleted) {
+    function updateFichaStatusBadge(isCompleted, customEstado = null) {
+        const currentEstado = customEstado || fieldEstado.value;
+        if (isCompleted && currentEstado === 'Libre') {
+            fichaStatusBadge.textContent = 'Bóveda Libre (L)';
+            fichaStatusBadge.className = 'inline-flex items-center px-3.5 py-1 rounded-full text-xs font-bold bg-sky-100 text-sky-900 border border-sky-200/80';
+        } else if (isCompleted) {
             fichaStatusBadge.textContent = 'Autocompletado';
             fichaStatusBadge.className = 'inline-flex items-center px-3.5 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-900 border border-emerald-200/80';
         } else {
@@ -671,28 +731,52 @@ document.addEventListener('DOMContentLoaded', () => {
         showToast('Persona eliminada de la ficha.', 'info');
     });
 
-    // Extractor inteligente local (funciona offline y como respaldo inmediato)
-    function parseTextToFichaLocal(rawText) {
-        const text = (rawText || '').trim();
-        if (!text) return;
+    // Helper para detectar si la placa tiene únicamente la marca "L" (bóveda libre)
+    function isFreeVaultMarker(rawText) {
+        const cleaned = (rawText || '')
+            .replace(/#{1,2}FIL[^\n]+/gi, '')
+            .replace(/\d{1,2}\s+[a-z]{3,10}\s+\d{4}\s+\d{1,2}:\d{2}(?::\d{2})?/gi, '')
+            .replace(/(?:Bogotá|Calle|Carrera|Sur|Norte|Antonio Nariño|D\.C\.|GAL=|PA=)[^\n]*/gi, '')
+            .replace(/[^A-Za-zÁÉÍÓÚÑáéíóúñ0-9]/g, '')
+            .trim();
+        return /^L$/i.test(cleaned) || /^LIBRE$/i.test(cleaned);
+    }
 
-        const codeMatch = text.match(/#FILA\/[^\s\n]+(?:\s+#P[^\s\n]+)?(?:\s+G\d+)?/i);
-        if (codeMatch) {
-            fieldCodigoOriginal.value = codeMatch[0].trim();
+    // Extractor inteligente local (devuelve objeto estructurado sin tocar el DOM directamente)
+    function buildFichaFromLocalText(rawText) {
+        const text = (rawText || '').trim();
+        const ficha = createEmptyFichaState();
+        if (!text) return ficha;
+
+        const codeMatch = text.match(/#{1,2}FIL[^\n]+/i);
+        if (codeMatch) ficha.codigoOriginal = codeMatch[0].trim();
+
+        // Si la lápida solo contiene la letra "L", marcar automáticamente como bóveda libre
+        if (isFreeVaultMarker(text)) {
+            ficha.estado = 'Libre';
+            ficha.peopleRecords = [{
+                nombre: 'LIBRE (Bóveda disponible)',
+                nacimiento: '',
+                fallecimiento: '',
+                edad: '',
+                dedicatoria: ''
+            }];
+            ficha.inscripcionCompleta = text;
+            ficha.extractedText = text;
+            ficha.isCompleted = true;
+            return ficha;
         }
 
         const serialMatch = text.match(/(?:Serial|N[°ºo]\.?|Ref\.?)\s*:?\s*([A-Z0-9\-\/]+)/i);
-        if (serialMatch) {
-            fieldSerialManual.value = serialMatch[1].trim();
-        }
+        if (serialMatch) ficha.serialManual = serialMatch[1].trim();
 
         let nacimiento = '';
         let fallecimiento = '';
-        const nacMatch = text.match(/(?:N\.|Nac\.?|Nacimiento|\*)\s*:?\s*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}|\d{4})/i);
-        const falMatch = text.match(/(?:F\.|Fall\.?|Fallecimiento|\+|†|Q\.E\.P\.D\.?)\s*:?\s*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}|\d{4})/i);
+        const nacMatch = text.match(/(?:N\.|Nac\.?|Nacimiento|\*)\s*:?\s*(\d{1,2}\s*[-–\/\.]\s*[A-Za-zÁÉÍÓÚáéíóú0-9]+\.?\s*[-–\/\.]\s*\d{2,4}|\d{4})/i);
+        const falMatch = text.match(/(?:F\.|Fall\.?|Fallecimiento|\+|†|Q\.E\.P\.D\.?)\s*:?\s*(\d{1,2}\s*[-–\/\.]\s*[A-Za-zÁÉÍÓÚáéíóú0-9]+\.?\s*[-–\/\.]\s*\d{2,4}|\d{4})/i);
 
-        if (nacMatch) nacimiento = nacMatch[1];
-        if (falMatch) fallecimiento = falMatch[1];
+        if (nacMatch) nacimiento = nacMatch[1].trim();
+        if (falMatch) fallecimiento = falMatch[1].trim();
 
         if (!nacimiento && !fallecimiento) {
             const rangeMatch = text.match(/\b(1[89]\d{2}|20[0-2]\d)\s*[-–—]\s*(1[89]\d{2}|20[0-2]\d)\b/);
@@ -713,118 +797,86 @@ document.addEventListener('DOMContentLoaded', () => {
         const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
         let nombre = '';
         for (const line of lines) {
-            if (/^#FILA/i.test(line)) continue;
+            if (/^#{1,2}FIL/i.test(line)) continue;
             if (/^(Serial|N[°º]|Nac|Fall|Edad|Recuerdo|En memoria|Q\.E\.P\.D)/i.test(line)) continue;
-            if (/^\d{1,4}[\-\/\.]/.test(line)) continue;
+            if (/^[\*\+†\d]/.test(line)) continue;
             if (line.length >= 4 && /[A-Za-zÁÉÍÓÚÑáéíóúñ]{3,}/.test(line)) {
                 nombre = line;
                 break;
             }
         }
 
-        peopleRecords = [{
-            nombre,
-            nacimiento,
-            fallecimiento,
-            edad,
-            dedicatoria
-        }];
-        loadPersonIntoInputs(0);
-        fieldEstado.value = 'Legible';
-        fieldInscripcionCompleta.value = text;
-        updateFichaStatusBadge(true);
+        ficha.peopleRecords = [{ nombre, nacimiento, fallecimiento, edad, dedicatoria }];
+        ficha.estado = 'Legible';
+        ficha.inscripcionCompleta = text;
+        ficha.extractedText = text;
+        ficha.isCompleted = true;
+        return ficha;
     }
 
-    // Extractor estructurado con IA Multimodal Gemini
-    async function autoFillFichaWithGemini(rawText) {
-        const text = (rawText || '').trim();
-        if (!text) return;
-
-        parseTextToFichaLocal(text);
-
-        try {
-            const apiKey = getGeminiApiKey();
-            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
-            const payload = {
-                contents: [{
-                    role: "user",
-                    parts: [{
-                        text: `Analiza la siguiente transcripción de una lápida, placa o ficha y extrae los datos estructurados para llenar un formulario de Excel:\n\n${text}`
-                    }]
-                }],
-                generationConfig: {
-                    responseMimeType: "application/json",
-                    responseSchema: {
-                        type: "OBJECT",
-                        properties: {
-                            codigoOriginal: { type: "STRING" },
-                            serialManual: { type: "STRING" },
-                            estado: { type: "STRING" },
-                            personas: {
-                                type: "ARRAY",
-                                items: {
-                                    type: "OBJECT",
-                                    properties: {
-                                        nombre: { type: "STRING" },
-                                        nacimiento: { type: "STRING" },
-                                        fallecimiento: { type: "STRING" },
-                                        edad: { type: "STRING" },
-                                        dedicatoria: { type: "STRING" }
-                                    },
-                                    required: ["nombre", "nacimiento", "fallecimiento", "edad", "dedicatoria"]
-                                }
-                            },
-                            inscripcionCompleta: { type: "STRING" }
-                        },
-                        required: ["codigoOriginal", "serialManual", "estado", "personas", "inscripcionCompleta"]
-                    }
-                }
-            };
-
-            const response = await fetch(apiUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-
-            if (!response.ok) return;
-            const result = await response.json();
-            const jsonStr = result?.candidates?.[0]?.content?.parts?.[0]?.text;
-            if (!jsonStr) return;
-
-            const parsed = JSON.parse(jsonStr);
-            if (parsed.codigoOriginal && parsed.codigoOriginal.trim()) {
-                fieldCodigoOriginal.value = parsed.codigoOriginal.trim();
-            }
-            if (parsed.serialManual) {
-                fieldSerialManual.value = parsed.serialManual.trim();
-            }
-            if (Array.isArray(parsed.personas) && parsed.personas.length > 0) {
-                peopleRecords = parsed.personas.map(p => ({
-                    nombre: p.nombre || '',
-                    nacimiento: p.nacimiento || '',
-                    fallecimiento: p.fallecimiento || '',
-                    edad: p.edad || '',
-                    dedicatoria: p.dedicatoria || ''
-                }));
-                loadPersonIntoInputs(0);
-            }
-            if (parsed.inscripcionCompleta) {
-                fieldInscripcionCompleta.value = parsed.inscripcionCompleta.trim();
-            }
-            updateFichaStatusBadge(true);
-        } catch (e) {
-            // Respaldo local ya aplicado
+    function buildFichaFromGeminiObject(parsed, fallbackText) {
+        const base = buildFichaFromLocalText(fallbackText);
+        if (!parsed || typeof parsed !== 'object') return base;
+        if (parsed.codigoOriginal && parsed.codigoOriginal.trim()) {
+            base.codigoOriginal = parsed.codigoOriginal.trim();
         }
+        if (parsed.serialManual) {
+            base.serialManual = parsed.serialManual.trim();
+        }
+
+        // Verificar si la IA detectó bóveda libre ("L" o "Libre")
+        const aiEstado = (parsed.estado || '').trim();
+        const firstNombre = Array.isArray(parsed.personas) && parsed.personas[0]
+            ? (parsed.personas[0].nombre || '').trim()
+            : '';
+        if (/^libre$/i.test(aiEstado) || /^l$/i.test(firstNombre) || isFreeVaultMarker(fallbackText)) {
+            base.estado = 'Libre';
+            base.peopleRecords = [{
+                nombre: 'LIBRE (Bóveda disponible)',
+                nacimiento: '',
+                fallecimiento: '',
+                edad: '',
+                dedicatoria: ''
+            }];
+            base.inscripcionCompleta = (parsed.inscripcionCompleta || fallbackText || 'L — Bóveda Libre').trim();
+            base.isCompleted = true;
+            return base;
+        }
+
+        if (Array.isArray(parsed.personas) && parsed.personas.length > 0) {
+            base.peopleRecords = parsed.personas.map(p => ({
+                nombre: p.nombre || '',
+                nacimiento: p.nacimiento || '',
+                fallecimiento: p.fallecimiento || '',
+                edad: p.edad || '',
+                dedicatoria: p.dedicatoria || ''
+            }));
+        }
+        if (parsed.inscripcionCompleta) {
+            base.inscripcionCompleta = parsed.inscripcionCompleta.trim();
+        }
+        base.isCompleted = true;
+        return base;
     }
 
-    btnAutoFillFromText.addEventListener('click', async () => {
+    function applyFichaObjectToDOM(ficha) {
+        fieldCodigoOriginal.value = ficha.codigoOriginal || '#FILA/0 #P0 G0';
+        fieldSerialManual.value = ficha.serialManual || '';
+        fieldEstado.value = ficha.estado || 'Legible';
+        peopleRecords = JSON.parse(JSON.stringify(ficha.peopleRecords || [{ nombre: '', nacimiento: '', fallecimiento: '', edad: '', dedicatoria: '' }]));
+        loadPersonIntoInputs(0);
+        fieldInscripcionCompleta.value = ficha.inscripcionCompleta || '';
+        updateFichaStatusBadge(Boolean(ficha.isCompleted), ficha.estado);
+    }
+
+    btnAutoFillFromText.addEventListener('click', () => {
         const txt = extractedText.value.trim();
         if (!txt) {
             showToast('No hay texto transcrito para rellenar la ficha.', 'info');
             return;
         }
-        await autoFillFichaWithGemini(txt);
+        const ficha = buildFichaFromLocalText(txt);
+        applyFichaObjectToDOM(ficha);
         saveActiveLapidaState();
         renderBatchTray();
         showToast('Ficha rellenada desde el texto actual.', 'success');
@@ -943,7 +995,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const lapidaLabel = activeLapidaIndex >= 0 ? `Lápida #${activeLapidaIndex + 1}` : 'Ficha Individual';
 
         try {
-            // HOJA 1: PLACA INDIVIDUAL + DATOS
+            // ================= HOJA 1: PLACA INDIVIDUAL + DATOS =================
             doc.setFillColor(15, 23, 42);
             doc.rect(0, 0, pageW, 24, 'F');
             doc.setTextColor(255, 255, 255);
@@ -1070,7 +1122,7 @@ document.addEventListener('DOMContentLoaded', () => {
             doc.setTextColor(100, 116, 139);
             doc.text(`Página 1 de 2 — ${lapidaLabel} (${codigoActual})`, margin, pageH - 8);
 
-            // HOJA 2: FOTOGRAFÍA DE LA BÓVEDA
+            // ================= HOJA 2: FOTOGRAFÍA DE LA BÓVEDA =================
             doc.addPage();
             const titular = personasList[0]?.nombre || 'Sin titular registrado';
 
@@ -1302,26 +1354,36 @@ document.addEventListener('DOMContentLoaded', () => {
         showToast('Ficha de ejemplo #FILA/0 #P0 G0 generada y escaneando...', 'info');
     });
 
-    // --- PIPELINE DE PREPROCESAMIENTO DE IMAGEN EN CANVAS ---
-    function buildProcessedCanvasDataUrl(applyAdaptivePreprocess = false) {
+    // --- PIPELINE RÁPIDO DE OPTIMIZACIÓN DE IMAGEN EN CANVAS ---
+    function prepareFastImageDataUrl(imageSrc, options = {}) {
+        const {
+            brightness = 100,
+            contrast = 100,
+            rotation = 0,
+            maxDimension = 1280,
+            applyAdaptivePreprocess = false
+        } = options;
+
         return new Promise((resolve, reject) => {
             const img = new Image();
             img.crossOrigin = 'anonymous';
             img.onload = () => {
-                const isRotated = (imgRotation % 180 !== 0);
-                const targetW = isRotated ? img.naturalHeight : img.naturalWidth;
-                const targetH = isRotated ? img.naturalWidth : img.naturalHeight;
+                const isRotated = (rotation % 180 !== 0);
+                const rawW = isRotated ? img.naturalHeight : img.naturalWidth;
+                const rawH = isRotated ? img.naturalWidth : img.naturalHeight;
 
-                const scaleFactor = targetW < 1000 ? 1.5 : 1;
+                const longestSide = Math.max(rawW, rawH);
+                const scaleFactor = longestSide > maxDimension ? (maxDimension / longestSide) : 1;
+
                 const canvas = document.createElement('canvas');
-                canvas.width = Math.round(targetW * scaleFactor);
-                canvas.height = Math.round(targetH * scaleFactor);
+                canvas.width = Math.max(1, Math.round(rawW * scaleFactor));
+                canvas.height = Math.max(1, Math.round(rawH * scaleFactor));
                 const ctx = canvas.getContext('2d');
 
                 ctx.save();
-                ctx.filter = `brightness(${imgBrightness}%) contrast(${imgContrast}%)`;
+                ctx.filter = `brightness(${brightness}%) contrast(${contrast}%)`;
                 ctx.translate(canvas.width / 2, canvas.height / 2);
-                ctx.rotate((imgRotation * Math.PI) / 180);
+                ctx.rotate((rotation * Math.PI) / 180);
                 ctx.drawImage(
                     img,
                     (-img.naturalWidth * scaleFactor) / 2,
@@ -1336,57 +1398,36 @@ document.addEventListener('DOMContentLoaded', () => {
                     const data = imageData.data;
                     const w = canvas.width;
                     const h = canvas.height;
-
                     const gray = new Uint8ClampedArray(w * h);
                     let sum = 0;
+
                     for (let i = 0, p = 0; i < data.length; i += 4, p++) {
                         const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
                         gray[p] = lum;
                         sum += lum;
                     }
-                    const meanLum = sum / (w * h);
-
-                    const sharpened = new Uint8ClampedArray(w * h);
-                    for (let y = 1; y < h - 1; y++) {
-                        for (let x = 1; x < w - 1; x++) {
-                            const idx = y * w + x;
-                            const val =
-                                5 * gray[idx] -
-                                gray[idx - 1] -
-                                gray[idx + 1] -
-                                gray[idx - w] -
-                                gray[idx + w];
-                            sharpened[idx] = Math.max(0, Math.min(255, val));
-                        }
-                    }
-
-                    const threshold = meanLum * 0.88;
+                    const threshold = (sum / (w * h)) * 0.86;
                     for (let i = 0, p = 0; i < data.length; i += 4, p++) {
-                        const v = sharpened[p] || gray[p];
-                        let enhanced;
-                        if (v < threshold - 25) {
-                            enhanced = 0;
-                        } else if (v > threshold + 20) {
-                            enhanced = 255;
-                        } else {
-                            enhanced = Math.round(((v - (threshold - 25)) / 45) * 255);
-                        }
+                        const v = gray[p];
+                        const enhanced = v < threshold - 22 ? 0 : (v > threshold + 18 ? 255 : Math.round(((v - (threshold - 22)) / 40) * 255));
                         data[i] = enhanced;
                         data[i + 1] = enhanced;
                         data[i + 2] = enhanced;
                     }
                     ctx.putImageData(imageData, 0, 0);
+                    resolve({ dataUrl: canvas.toDataURL('image/png'), mimeType: 'image/png' });
+                    return;
                 }
 
-                resolve(canvas.toDataURL('image/png'));
+                resolve({ dataUrl: canvas.toDataURL('image/jpeg', 0.86), mimeType: 'image/jpeg' });
             };
             img.onerror = reject;
-            img.src = currentImageSource;
+            img.src = imageSrc;
         });
     }
 
-    // --- MOTOR 1: IA MULTIMODAL CON GEMINI API ---
-    async function recognizeWithGeminiAI(processedDataUrl, langCode) {
+    // --- MOTOR 1 ULTRARRÁPIDO: LECTURA + ESTRUCTURACIÓN EN UNA SOLA LLAMADA ---
+    async function extractAndFillWithGeminiSingleCall(fastImgObj, langCode, apiKey) {
         const langMap = {
             spa: 'español',
             eng: 'inglés',
@@ -1394,93 +1435,140 @@ document.addEventListener('DOMContentLoaded', () => {
             por: 'portugués'
         };
         const targetLanguage = langMap[langCode] || 'español';
-        const base64Data = processedDataUrl.split(',')[1];
+        const base64Data = fastImgObj.dataUrl.split(',')[1];
 
-        const apiKey = getGeminiApiKey();
         const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
-        const systemPrompt = `Eres un experto paleógrafo y motor OCR multimodal de altísima precisión especializado en tipografía cursiva, caligrafía inclinada, letra manuscrita y códigos técnicos/alfanuméricos.
-Tu única tarea es transcribir fielmente todo el texto visible en la imagen en ${targetLanguage}.
-Reglas estrictas:
-- Devuelve ÚNICAMENTE el texto transcrito, respetando párrafos, signos de puntuación, acentos y símbolos exactos (#, /, -, _, números y ceros como 0 vs O).
-- Conserva códigos técnicos o etiquetas exactamente como aparecen (por ejemplo: #FILA/0 #P0 G0) sin autocorregirlos ni alterarlos.
-- No agregues introducciones, comentarios, comillas envolventes ni explicaciones.
-- Si una palabra en cursiva está parcialmente ligada, infiere con precisión contextual su ortografía exacta.
-- Si no hay ningún texto legible en la imagen, responde exactamente: [SIN_TEXTO]`;
+        const prompt = `Lee todo el texto de esta lápida/placa en ${targetLanguage} (incluyendo letra cursiva esculpida, fechas * y †, dedicatorias y códigos de esquina como ##FIL=2 #GAL=1 #PA=29 o #FILA/0 #P0 G0). IMPORTANTE: Si la lápida está vacía o solo tiene escrita o pintada una letra "L" (que significa bóveda Libre/disponible), coloca estado="Libre" y nombre="LIBRE (Bóveda disponible)". Devuelve en JSON tanto la transcripción completa como los campos estructurados para Excel.`;
 
         const payload = {
-            contents: [
-                {
-                    role: "user",
-                    parts: [
-                        { text: `Transcribe con máxima exactitud el texto (incluyendo letra cursiva o manuscrita) de esta imagen en ${targetLanguage}:` },
-                        {
-                            inlineData: {
-                                mimeType: "image/png",
-                                data: base64Data
-                            }
+            contents: [{
+                role: "user",
+                parts: [
+                    { text: prompt },
+                    {
+                        inlineData: {
+                            mimeType: fastImgObj.mimeType,
+                            data: base64Data
                         }
-                    ]
+                    }
+                ]
+            }],
+            generationConfig: {
+                temperature: 0.1,
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: "OBJECT",
+                    properties: {
+                        textoTranscrito: { type: "STRING" },
+                        codigoOriginal: { type: "STRING" },
+                        serialManual: { type: "STRING" },
+                        estado: { type: "STRING" },
+                        personas: {
+                            type: "ARRAY",
+                            items: {
+                                type: "OBJECT",
+                                properties: {
+                                    nombre: { type: "STRING" },
+                                    nacimiento: { type: "STRING" },
+                                    fallecimiento: { type: "STRING" },
+                                    edad: { type: "STRING" },
+                                    dedicatoria: { type: "STRING" }
+                                },
+                                required: ["nombre", "nacimiento", "fallecimiento", "edad", "dedicatoria"]
+                            }
+                        },
+                        inscripcionCompleta: { type: "STRING" }
+                    },
+                    required: ["textoTranscrito", "codigoOriginal", "serialManual", "estado", "personas", "inscripcionCompleta"]
                 }
-            ],
-            systemInstruction: {
-                parts: [{ text: systemPrompt }]
             }
         };
 
-        const delays = [1000, 2000, 4000];
-        for (let attempt = 0; attempt <= delays.length; attempt++) {
-            try {
-                const response = await fetch(apiUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
+        const response = await fetch(apiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
 
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}`);
-                }
-
-                const result = await response.json();
-                const text = result?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-                return text.trim() === '[SIN_TEXTO]' ? '' : text.trim();
-            } catch (err) {
-                if (attempt === delays.length) throw err;
-                await new Promise(res => setTimeout(res, delays[attempt]));
-            }
+        if (!response.ok) {
+            const errText = await response.text().catch(() => '');
+            throw new Error(`HTTP ${response.status}: ${errText}`);
         }
-        return '';
+
+        const result = await response.json();
+        const jsonStr = result?.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+        const parsed = JSON.parse(jsonStr);
+        const text = (parsed.textoTranscrito || '').trim();
+        const ficha = buildFichaFromGeminiObject(parsed, text);
+        ficha.extractedText = text;
+        return { text, ficha };
     }
 
-    // --- MOTOR 2: OCR CLÁSICO CON TESSERACT.JS OPTIMIZADO ---
-    async function recognizeWithTesseract(processedDataUrl, langCode) {
-        const worker = await Tesseract.createWorker(langCode, 1, {
-            logger: (m) => {
-                if (m.status === 'recognizing text') {
-                    const pct = Math.min(98, Math.round(25 + m.progress * 73));
-                    progressBar.style.width = `${pct}%`;
-                    progressPercent.textContent = `${pct}%`;
-                    statusText.lastChild.textContent = ' Analizando trazos cursivos...';
-                } else if (m.status === 'loading language traineddata') {
-                    statusText.lastChild.textContent = ' Cargando diccionario de idioma...';
-                    progressBar.style.width = '20%';
-                    progressPercent.textContent = '20%';
-                }
+    // --- MOTOR 2: OCR CLÁSICO CON TESSERACT.JS CON WORKER EN CACHÉ ---
+    async function recognizeWithTesseractFast(processedDataUrl, langCode, updateProgress = true) {
+        if (!cachedTesseractWorker || cachedTesseractLang !== langCode) {
+            if (cachedTesseractWorker) {
+                await cachedTesseractWorker.terminate().catch(() => {});
             }
-        });
+            cachedTesseractWorker = await Tesseract.createWorker(langCode, 1, {
+                logger: (m) => {
+                    if (!updateProgress) return;
+                    if (m.status === 'recognizing text') {
+                        const pct = Math.min(98, Math.round(25 + m.progress * 73));
+                        progressBar.style.width = `${pct}%`;
+                        progressPercent.textContent = `${pct}%`;
+                        statusText.lastChild.textContent = ' Analizando trazos...';
+                    }
+                }
+            });
+            await cachedTesseractWorker.setParameters({
+                tessedit_pageseg_mode: Tesseract.PSM.AUTO,
+                preserve_interword_spaces: '1'
+            });
+            cachedTesseractLang = langCode;
+        }
 
-        await worker.setParameters({
-            tessedit_pageseg_mode: Tesseract.PSM.AUTO,
-            preserve_interword_spaces: '1'
-        });
-
-        const { data: { text } } = await worker.recognize(processedDataUrl);
-        await worker.terminate();
+        const { data: { text } } = await cachedTesseractWorker.recognize(processedDataUrl);
         return text.trim();
     }
 
-    // --- ORQUESTADOR DE RECONOCIMIENTO ÓPTICO ---
+    // Procesa un elemento individual del lote (usado tanto por individual como por lote paralelo)
+    async function processSingleLapidaItem(item, selectedLang) {
+        const apiKey = getGeminiApiKey();
+        if (activeEngine === 'gemini' && apiKey) {
+            const fastImg = await prepareFastImageDataUrl(item.dataUrl, {
+                brightness: item.brightness ?? 100,
+                contrast: item.contrast ?? 100,
+                rotation: item.rotation ?? 0,
+                maxDimension: 1280,
+                applyAdaptivePreprocess: false
+            });
+            return await extractAndFillWithGeminiSingleCall(fastImg, selectedLang, apiKey);
+        } else {
+            const adaptiveImg = await prepareFastImageDataUrl(item.dataUrl, {
+                brightness: item.brightness ?? 100,
+                contrast: item.contrast ?? 100,
+                rotation: item.rotation ?? 0,
+                maxDimension: 1400,
+                applyAdaptivePreprocess: true
+            });
+            const text = await recognizeWithTesseractFast(adaptiveImg.dataUrl, selectedLang, false);
+            const ficha = buildFichaFromLocalText(text);
+            return { text, ficha };
+        }
+    }
+
+    // --- ORQUESTADOR DE RECONOCIMIENTO ÓPTICO INDIVIDUAL ---
     async function runOCRProcess() {
         if (!currentImageSource || isScanning) return;
+
+        const apiKey = getGeminiApiKey();
+        if (activeEngine === 'gemini' && !apiKey) {
+            showToast('Falta tu Clave API de Gemini: pégala en el botón verde superior para leer cursiva.', 'error');
+            liveBadge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span> Configura tu Clave API Gemini arriba para activar IA';
+            apiKeyModal.classList.remove('hidden');
+            return;
+        }
 
         isScanning = true;
         stopSpeech();
@@ -1489,37 +1577,53 @@ Reglas estrictas:
         btnScanNow.disabled = true;
         scannerLaser.classList.remove('hidden');
         progressWrapper.classList.remove('hidden');
-        progressBar.style.width = '12%';
-        progressPercent.textContent = '12%';
-        statusText.lastChild.textContent = ' Aplicando ajustes de imagen...';
+        progressBar.style.width = '20%';
+        progressPercent.textContent = '20%';
+        statusText.lastChild.textContent = ' Optimizando imagen...';
         liveBadge.textContent = activeEngine === 'gemini'
-            ? 'IA Multimodal analizando caligrafía...'
+            ? 'IA Multimodal analizando lápida y ficha...'
             : 'OCR Clásico procesando imagen...';
 
         try {
             let finalExtracted = '';
+            let finalFicha = null;
 
             if (activeEngine === 'gemini') {
-                const userAdjustedDataUrl = await buildProcessedCanvasDataUrl(false);
-                progressBar.style.width = '45%';
-                progressPercent.textContent = '45%';
-                statusText.lastChild.textContent = ' Leyendo cursiva con IA Multimodal...';
+                const fastImgObj = await prepareFastImageDataUrl(currentImageSource, {
+                    brightness: imgBrightness,
+                    contrast: imgContrast,
+                    rotation: imgRotation,
+                    maxDimension: 1280,
+                    applyAdaptivePreprocess: false
+                });
+                progressBar.style.width = '55%';
+                progressPercent.textContent = '55%';
+                statusText.lastChild.textContent = ' Transcribiendo y rellenando ficha...';
 
                 try {
-                    finalExtracted = await recognizeWithGeminiAI(userAdjustedDataUrl, selectedLang);
+                    const res = await extractAndFillWithGeminiSingleCall(fastImgObj, selectedLang, apiKey);
+                    finalExtracted = res.text;
+                    finalFicha = res.ficha;
                     progressBar.style.width = '100%';
                     progressPercent.textContent = '100%';
                 } catch (aiErr) {
-                    statusText.lastChild.textContent = ' Cambiando a OCR Clásico adaptativo...';
-                    const adaptiveDataUrl = await buildProcessedCanvasDataUrl(true);
-                    finalExtracted = await recognizeWithTesseract(adaptiveDataUrl, selectedLang);
+                    console.error('Error con Gemini API:', aiErr);
+                    showToast('Error al conectar con Gemini API. Verifica tu clave API.', 'error');
+                    liveBadge.textContent = 'Error de conexión con Gemini API';
+                    return;
                 }
             } else {
-                statusText.lastChild.textContent = ' Aplicando filtro adaptativo para cursiva...';
-                const adaptiveDataUrl = await buildProcessedCanvasDataUrl(true);
-                progressBar.style.width = '25%';
-                progressPercent.textContent = '25%';
-                finalExtracted = await recognizeWithTesseract(adaptiveDataUrl, selectedLang);
+                const adaptiveImgObj = await prepareFastImageDataUrl(currentImageSource, {
+                    brightness: imgBrightness,
+                    contrast: imgContrast,
+                    rotation: imgRotation,
+                    maxDimension: 1400,
+                    applyAdaptivePreprocess: true
+                });
+                progressBar.style.width = '30%';
+                progressPercent.textContent = '30%';
+                finalExtracted = await recognizeWithTesseractFast(adaptiveImgObj.dataUrl, selectedLang, true);
+                finalFicha = buildFichaFromLocalText(finalExtracted);
                 progressBar.style.width = '100%';
                 progressPercent.textContent = '100%';
             }
@@ -1527,11 +1631,18 @@ Reglas estrictas:
             if (finalExtracted) {
                 extractedText.value = finalExtracted;
                 updateWordCount();
-                await autoFillFichaWithGemini(finalExtracted);
+                if (finalFicha) {
+                    applyFichaObjectToDOM(finalFicha);
+                }
                 saveActiveLapidaState();
                 renderBatchTray();
-                showToast('¡Texto transcrito y ficha rellenada automáticamente!', 'success');
-                liveBadge.textContent = 'Transcripción y Ficha completadas';
+                if (finalFicha?.estado === 'Libre') {
+                    showToast('Placa con "L" detectada: marcada automáticamente como Bóveda Libre.', 'info');
+                    liveBadge.textContent = 'Bóveda Libre (L) detectada';
+                } else {
+                    showToast('¡Texto transcrito y ficha rellenada al instante!', 'success');
+                    liveBadge.textContent = 'Transcripción y Ficha completadas';
+                }
             } else {
                 extractedText.value = '';
                 updateWordCount();
@@ -1549,7 +1660,7 @@ Reglas estrictas:
             scannerLaser.classList.add('hidden');
             setTimeout(() => {
                 progressWrapper.classList.add('hidden');
-            }, 900);
+            }, 600);
         }
     }
 
