@@ -26,8 +26,20 @@ document.addEventListener('DOMContentLoaded', () => {
     // Selector de motores OCR
     const btnEngineAI = document.getElementById('btnEngineAI');
     const btnEngineClassic = document.getElementById('btnEngineClassic');
-    const btnEngineHandwriting = document.getElementById('btnEngineHandwriting');
+    let btnEngineHandwriting = document.getElementById('btnEngineHandwriting');
     const engineHint = document.getElementById('engineHint');
+
+    // Mantiene compatibilidad si Vercel sirve un index.html anterior al app.js.
+    // Sin este control, un addEventListener sobre null detiene todo el resto del OCR.
+    if (!btnEngineHandwriting && btnEngineAI?.parentElement) {
+        btnEngineHandwriting = document.createElement('button');
+        btnEngineHandwriting.id = 'btnEngineHandwriting';
+        btnEngineHandwriting.type = 'button';
+        btnEngineHandwriting.dataset.engine = 'paddleocr';
+        btnEngineHandwriting.className = btnEngineClassic?.className || 'engine-tab py-2 px-3 rounded-xl text-xs font-medium text-slate-600 hover:text-slate-900 transition-all flex items-center justify-center gap-1.5 cursor-pointer';
+        btnEngineHandwriting.textContent = 'Cursiva local';
+        btnEngineAI.parentElement.appendChild(btnEngineHandwriting);
+    }
 
     const cameraContainer = document.getElementById('cameraContainer');
     const cameraFeed = document.getElementById('cameraFeed');
