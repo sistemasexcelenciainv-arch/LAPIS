@@ -64,7 +64,7 @@
                         <h1 class="text-base sm:text-xl font-bold tracking-tight text-slate-900 leading-tight">Lectura de Imagen</h1>
                         <span class="hidden sm:inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-brand-50 text-brand-700 border border-brand-200/70">IA Studio + Excel</span>
                     </div>
-                    <p class="text-xs text-slate-500 mt-0.5">Reconocimiento Óptico y Relleno Automático de Ficha Individual</p>
+                    <p class="text-xs text-slate-500 mt-0.5">Reconocimiento Óptico Rápido, Detección de Bóveda Libre (L) y Excel</p>
                 </div>
             </div>
 
@@ -150,7 +150,7 @@
                                 </svg>
                             </div>
                             <p class="text-sm font-bold text-slate-800 mb-1">Arrastra hasta 10 imágenes aquí o haz clic</p>
-                            <p class="text-xs text-slate-500 max-w-xs mx-auto leading-relaxed">Cada lápida conserva su ficha independiente para rellenar Excel y descargar su PDF individual (JPG, PNG, WEBP)</p>
+                            <p class="text-xs text-slate-500 max-w-xs mx-auto leading-relaxed">Cada lápida conserva su ficha independiente (si tiene una "L" se marca como Libre automáticamente)</p>
                         </div>
 
                         <!-- Estado 2: Vista Previa de Imagen -->
@@ -303,7 +303,7 @@
                     </div>
 
                     <div class="relative flex-1 flex flex-col">
-                        <textarea id="extractedText" placeholder="El texto reconocido de la lápida seleccionada (incluyendo letra cursiva, manuscrita o códigos técnicos) aparecerá aquí automáticamente. También puedes editarlo libremente..." class="w-full flex-1 min-h-[210px] sm:min-h-[250px] p-4 sm:p-5 rounded-2xl bg-slate-50/80 border border-slate-200/90 focus:bg-white focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10 outline-none text-slate-800 text-base leading-relaxed resize-none transition-all shadow-inner"></textarea>
+                        <textarea id="extractedText" placeholder="El texto reconocido de la lápida seleccionada (incluyendo letra cursiva, manuscrita, códigos técnicos o marca 'L' de libre) aparecerá aquí automáticamente..." class="w-full flex-1 min-h-[210px] sm:min-h-[250px] p-4 sm:p-5 rounded-2xl bg-slate-50/80 border border-slate-200/90 focus:bg-white focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10 outline-none text-slate-800 text-base leading-relaxed resize-none transition-all shadow-inner"></textarea>
                     </div>
 
                     <div class="flex justify-center my-3">
@@ -424,6 +424,7 @@
                         <label for="fieldEstado" class="block text-sm font-bold text-slate-800 mb-1.5">Estado</label>
                         <select id="fieldEstado" class="w-full px-4 py-2.5 rounded-2xl bg-white border border-slate-300/90 text-slate-900 text-sm font-medium focus:border-emerald-600 focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all cursor-pointer">
                             <option value="Legible" selected>Legible</option>
+                            <option value="Libre">Libre (Espacio disponible)</option>
                             <option value="Parcialmente legible">Parcialmente legible</option>
                             <option value="Ilegible / Deteriorado">Ilegible / Deteriorado</option>
                             <option value="Pendiente de revisión">Pendiente de revisión</option>
@@ -450,7 +451,7 @@
 
                 <div>
                     <label for="fieldNombreInscrito" class="block text-sm font-bold text-slate-800 mb-1.5">Nombre inscrito</label>
-                    <input id="fieldNombreInscrito" type="text" placeholder="Nombre completo de la persona inscrita" class="w-full px-4 py-2.5 rounded-2xl bg-white border border-slate-300/90 text-slate-900 text-sm focus:border-emerald-600 focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all">
+                    <input id="fieldNombreInscrito" type="text" placeholder="Nombre completo de la persona inscrita (o LIBRE si tiene L)" class="w-full px-4 py-2.5 rounded-2xl bg-white border border-slate-300/90 text-slate-900 text-sm focus:border-emerald-600 focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all">
                 </div>
 
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
