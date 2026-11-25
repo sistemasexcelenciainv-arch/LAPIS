@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lectura de Imagen — Escáner OCR Inteligente</title>
+    
+    <!-- Tailwind CSS para utilidades visuales -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Tesseract.js para Reconocimiento Óptico de Caracteres (OCR) local -->
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    <!-- jsPDF para generar el reporte PDF individual de 2 hojas -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <!-- Fuentes de Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Dancing+Script:wght@500;600;700&family=Great+Vibes&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Configuración de Tailwind -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        cursive: ['"Dancing Script"', 'cursive'],
+                    },
+                    colors: {
+                        brand: {
+                            50: '#eef2ff',
+                            100: '#e0e7ff',
+                            200: '#c7d2fe',
+                            400: '#818cf8',
+                            500: '#6366f1',
+                            600: '#4f46e5',
+                            700: '#4338ca',
+                        }
+                    },
+                    boxShadow: {
+                        'soft': '0 10px 40px -10px rgba(15, 23, 42, 0.08)',
+                        'glow': '0 0 25px rgba(79, 70, 229, 0.35)',
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- Hoja de estilos externa (CSS) -->
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body class="bg-studio text-slate-800 font-sans min-h-screen flex flex-col antialiased selection:bg-brand-100 selection:text-brand-700">
+
+    <div class="max-w-6xl w-full mx-auto px-4 sm:px-6 py-4 sm:py-7 flex-1 flex flex-col">
+        <!-- Encabezado Superior -->
+        <header class="bg-white/85 backdrop-blur-md rounded-3xl shadow-soft border border-white/80 ring-1 ring-slate-200/70 px-4 sm:px-6 py-4 mb-6 flex flex-wrap items-center justify-between gap-4">
+            <div class="flex items-center gap-3.5">
+                <div class="relative w-11 h-11 rounded-2xl bg-gradient-to-br from-brand-600 via-indigo-600 to-sky-500 text-white flex items-center justify-center shadow-md shadow-brand-500/25">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/>
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/>
+                    </svg>
+                    <span class="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-emerald-400 border-2 border-white"></span>
+                </div>
+                <div>
+                    <div class="flex items-center gap-2">
+                        <h1 class="text-base sm:text-xl font-bold tracking-tight text-slate-900 leading-tight">Lectura de Imagen</h1>
+                        <span class="hidden sm:inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-brand-50 text-brand-700 border border-brand-200/70">IA Studio + Excel</span>
+                    </div>
+                    <p class="text-xs text-slate-500 mt-0.5">Reconocimiento Óptico y Relleno Automático de Ficha Individual</p>
+                </div>
+            </div>
+
+            <!-- Botones de configuración y prueba rápida -->
+            <div class="flex flex-wrap items-center gap-2">
+                <button id="btnOpenApiKeyModal" type="button" class="inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200/80 px-3.5 py-2 rounded-xl transition-all active:scale-95 cursor-pointer">
+                    <svg class="w-4 h-4 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/>
+                    </svg>
+                    <span id="apiKeyBtnLabel">Clave API Gemini</span>
+                </button>
+                <button id="btnLoadSample" type="button" class="inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold text-brand-700 bg-brand-50/90 hover:bg-brand-100 border border-brand-200/60 px-3.5 py-2 rounded-xl transition-all active:scale-95 cursor-pointer">
+                    <svg class="w-4 h-4 text-brand-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/>
+                    </svg>
+                    <span>Probar Cursiva</span>
+                </button>
+                <button id="btnLoadTechSample" type="button" class="inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold text-slate-700 bg-slate-100/90 hover:bg-slate-200/80 border border-slate-200/70 px-3.5 py-2 rounded-xl transition-all active:scale-95 cursor-pointer">
+                    <svg class="w-4 h-4 text-sky-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14"/>
+                    </svg>
+                    <span>Probar Ficha #FILA/0</span>
+                </button>
+            </div>
+        </header>
+
+        <!-- Área Principal de Trabajo (2 Columnas) -->
+        <main class="grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1">
+            
+            <!-- COLUMNA IZQUIERDA: Visor de Imagen / Cámara / Ajustes de Imagen / Motor -->
+            <section class="lg:col-span-6 bg-white/90 backdrop-blur-md rounded-3xl shadow-soft border border-white ring-1 ring-slate-200/70 p-5 sm:p-6 flex flex-col justify-between">
+                <div>
+                    <div class="flex items-center justify-between mb-3.5">
+                        <div class="flex items-center gap-2">
+                            <span class="w-2 h-2 rounded-full bg-brand-500"></span>
+                            <span class="text-xs font-bold uppercase tracking-wider text-slate-500">Visor de Documento</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <button id="btnStartCamera" type="button" class="inline-flex items-center gap-1.5 text-xs font-semibold bg-slate-100 hover:bg-brand-50 text-slate-700 hover:text-brand-700 border border-slate-200/70 px-3 py-1.5 rounded-xl transition-all cursor-pointer">
+                                <svg class="w-3.5 h-3.5 text-brand-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/>
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/>
+                                </svg>
+                                <span>Cámara</span>
+                            </button>
+                            <label for="fileInput" class="inline-flex items-center gap-1.5 text-xs font-semibold bg-slate-100 hover:bg-brand-50 text-slate-700 hover:text-brand-700 border border-slate-200/70 px-3 py-1.5 rounded-xl transition-all cursor-pointer">
+                                <svg class="w-3.5 h-3.5 text-brand-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+                                </svg>
+                                <span>Subir (Máx. 10)</span>
+                            </label>
+                            <input id="fileInput" type="file" accept="image/*" multiple class="hidden">
+                        </div>
+                    </div>
+
+                    <!-- Bandeja de Lote: Hasta 10 Imágenes de Lápidas Independientes -->
+                    <div id="batchTrayWrapper" class="hidden mb-3 p-2.5 rounded-2xl bg-slate-50/95 border border-slate-200/80">
+                        <div class="flex items-center justify-between mb-2 px-1">
+                            <span id="batchCounterLabel" class="text-[11px] font-bold uppercase tracking-wider text-slate-600">Lote: 1 / 10 lápidas</span>
+                            <div class="flex items-center gap-1.5">
+                                <button id="btnScanAllBatch" type="button" class="inline-flex items-center gap-1 text-[11px] font-bold bg-brand-600 hover:bg-brand-700 text-white px-2.5 py-1 rounded-lg shadow-2xs transition-all cursor-pointer">
+                                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                                    </svg>
+                                    <span>Escanear Todas</span>
+                                </button>
+                                <button id="btnAddMoreLapidas" type="button" class="text-[11px] font-semibold bg-white hover:bg-brand-50 text-brand-700 border border-slate-200 px-2 py-1 rounded-lg transition-colors cursor-pointer">
+                                    + Añadir
+                                </button>
+                            </div>
+                        </div>
+                        <div id="batchThumbnailsGrid" class="grid grid-cols-5 sm:grid-cols-10 gap-1.5"></div>
+                    </div>
+
+                    <!-- Contenedor Visual del Escáner (Dropzone / Vista Previa / Video Cámara) -->
+                    <div id="dropZone" class="relative w-full h-64 sm:h-76 rounded-2xl border-2 border-dashed border-slate-300/90 bg-gradient-to-b from-slate-50 to-slate-100/70 hover:border-brand-400 hover:from-brand-50/30 hover:to-slate-50 transition-all flex flex-col items-center justify-center overflow-hidden group cursor-pointer">
+                        
+                        <!-- Estado 1: Vacío -->
+                        <div id="emptyState" class="text-center p-6 pointer-events-none">
+                            <div class="w-16 h-16 mx-auto mb-3.5 rounded-2xl bg-white shadow-md shadow-slate-200/70 border border-slate-100 flex items-center justify-center text-brand-600 group-hover:scale-105 group-hover:text-brand-700 transition-all">
+                                <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                                </svg>
+                            </div>
+                            <p class="text-sm font-bold text-slate-800 mb-1">Arrastra hasta 10 imágenes aquí o haz clic</p>
+                            <p class="text-xs text-slate-500 max-w-xs mx-auto leading-relaxed">Cada lápida conserva su ficha independiente para rellenar Excel y descargar su PDF individual (JPG, PNG, WEBP)</p>
+                        </div>
+
+                        <!-- Estado 2: Vista Previa de Imagen -->
+                        <div id="previewContainer" class="hidden relative w-full h-full bg-slate-950 scanner-grid flex items-center justify-center overflow-hidden">
+                            <img id="imagePreview" src="" alt="Vista previa del documento a escanear" class="max-w-full max-h-full object-contain transition-all duration-200 drop-shadow-xl">
+                            
+                            <div class="absolute inset-3.5 border border-white/15 rounded-xl pointer-events-none">
+                                <div class="absolute -top-0.5 -left-0.5 w-5 h-5 border-t-2 border-l-2 border-sky-400 rounded-tl-md"></div>
+                                <div class="absolute -top-0.5 -right-0.5 w-5 h-5 border-t-2 border-r-2 border-sky-400 rounded-tr-md"></div>
+                                <div class="absolute -bottom-0.5 -left-0.5 w-5 h-5 border-b-2 border-l-2 border-sky-400 rounded-bl-md"></div>
+                                <div class="absolute -bottom-0.5 -right-0.5 w-5 h-5 border-b-2 border-r-2 border-sky-400 rounded-br-md"></div>
+                            </div>
+
+                            <div id="scannerLaser" class="scanner-laser hidden"></div>
+                        </div>
+
+                        <!-- Estado 3: Cámara en Vivo -->
+                        <div id="cameraContainer" class="hidden relative w-full h-full bg-black flex items-center justify-center">
+                            <video id="cameraFeed" autoplay playsinline class="w-full h-full object-cover"></video>
+                            <div class="absolute bottom-3.5 inset-x-0 flex justify-center gap-3 z-20">
+                                <button id="btnCapturePhoto" type="button" class="bg-white text-slate-900 hover:bg-brand-50 font-bold text-xs px-4 py-2.5 rounded-full shadow-xl flex items-center gap-2 transition-transform active:scale-95 cursor-pointer">
+                                    <span class="w-3 h-3 rounded-full bg-rose-500 animate-pulse"></span>
+                                    <span>Capturar y Escanear</span>
+                                </button>
+                                <button id="btnStopCamera" type="button" class="bg-slate-900/80 text-white hover:bg-slate-900 text-xs font-medium px-3.5 py-2.5 rounded-full backdrop-blur-md border border-white/15 transition-colors cursor-pointer">
+                                    Cancelar
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Controles Rápidos de Ajuste de Imagen -->
+                    <div id="imageAdjustmentsBar" class="hidden mt-3.5 p-3.5 rounded-2xl bg-slate-50/90 border border-slate-200/80 space-y-3">
+                        <div class="flex items-center justify-between">
+                            <span class="text-[11px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                                <svg class="w-3.5 h-3.5 text-brand-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/>
+                                </svg>
+                                Mejora Óptica
+                            </span>
+                            <div class="flex items-center gap-1.5">
+                                <button id="btnRotate90" type="button" title="Rotar 90 grados" class="inline-flex items-center gap-1 text-[11px] font-semibold bg-white hover:bg-brand-50 text-slate-700 hover:text-brand-700 border border-slate-200 px-2.5 py-1 rounded-lg shadow-2xs transition-colors cursor-pointer">
+                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                                    </svg>
+                                    <span>Rotar 90°</span>
+                                </button>
+                                <button id="btnResetAdjustments" type="button" title="Restablecer ajustes" class="text-[11px] font-semibold text-slate-500 hover:text-slate-800 px-2 py-1 rounded-lg hover:bg-slate-200/60 transition-colors cursor-pointer">
+                                    Reset
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <div class="flex justify-between text-[11px] text-slate-600 mb-1.5">
+                                    <span class="font-medium">Brillo</span>
+                                    <span id="brightnessVal" class="font-bold text-brand-700">100%</span>
+                                </div>
+                                <input id="brightnessSlider" type="range" min="50" max="170" value="100" class="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer">
+                            </div>
+                            <div>
+                                <div class="flex justify-between text-[11px] text-slate-600 mb-1.5">
+                                    <span class="font-medium">Contraste</span>
+                                    <span id="contrastVal" class="font-bold text-brand-700">100%</span>
+                                </div>
+                                <input id="contrastSlider" type="range" min="50" max="200" value="100" class="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Selector de Motor Dual de Reconocimiento -->
+                    <div class="mt-4">
+                        <label class="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Motor de Reconocimiento</label>
+                        <div class="grid grid-cols-2 gap-1.5 p-1.5 bg-slate-100/90 border border-slate-200/60 rounded-2xl">
+                            <button id="btnEngineAI" type="button" data-engine="gemini" class="engine-tab py-2 px-3 rounded-xl text-xs font-semibold bg-white text-brand-700 shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer">
+                                <svg class="w-3.5 h-3.5 text-brand-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/>
+                                </svg>
+                                <span class="truncate">IA Multimodal (Cursiva)</span>
+                            </button>
+                            <button id="btnEngineClassic" type="button" data-engine="tesseract" class="engine-tab py-2 px-3 rounded-xl text-xs font-medium text-slate-600 hover:text-slate-900 transition-all flex items-center justify-center gap-1.5 cursor-pointer">
+                                <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"/>
+                                </svg>
+                                <span class="truncate">OCR Clásico (Local)</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Botón Principal de Acción + Barra de Progreso -->
+                <div class="mt-5">
+                    <div id="progressWrapper" class="hidden mb-3.5 bg-brand-50/90 border border-brand-200/70 rounded-2xl p-3.5">
+                        <div class="flex items-center justify-between text-xs font-semibold text-brand-700 mb-2">
+                            <span id="statusText" class="flex items-center gap-2">
+                                <svg class="w-3.5 h-3.5 animate-spin text-brand-600" fill="none" viewBox="0 0 24 24">
+                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                                </svg>
+                                Transcripción en Tiempo Real...
+                            </span>
+                            <span id="progressPercent" class="font-bold">0%</span>
+                        </div>
+                        <div class="w-full bg-brand-200/70 rounded-full h-2 overflow-hidden">
+                            <div id="progressBar" class="bg-gradient-to-r from-brand-600 to-sky-500 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+                        </div>
+                    </div>
+
+                    <button id="btnScanNow" type="button" disabled class="w-full py-3.5 px-5 rounded-2xl font-bold text-sm text-white bg-gradient-to-r from-brand-600 via-indigo-600 to-sky-600 hover:from-brand-700 hover:to-sky-700 disabled:from-slate-300 disabled:to-slate-300 disabled:shadow-none disabled:cursor-not-allowed shadow-lg shadow-brand-600/25 hover:shadow-glow transition-all active:scale-[0.99] flex items-center justify-center gap-2 cursor-pointer">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                        </svg>
+                        <span>Extraer Texto de esta Lápida</span>
+                    </button>
+                </div>
+            </section>
+
+            <!-- COLUMNA DERECHA: Resultado Transcrito, Lectura en Voz Alta y Controles Inferiores -->
+            <section class="lg:col-span-6 bg-white/90 backdrop-blur-md rounded-3xl shadow-soft border border-white ring-1 ring-slate-200/70 p-5 sm:p-6 flex flex-col justify-between">
+                <div class="flex flex-col flex-1">
+                    <div class="flex flex-wrap items-center justify-between gap-2 mb-3.5">
+                        <div class="flex items-center gap-2">
+                            <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+                            <span class="text-xs font-bold uppercase tracking-wider text-slate-500">Texto Transcrito</span>
+                            <span id="wordCountBadge" class="hidden text-[11px] font-semibold bg-brand-50 text-brand-700 border border-brand-200/60 px-2.5 py-0.5 rounded-full">0 palabras</span>
+                        </div>
+
+                        <div class="flex items-center gap-1.5">
+                            <div class="hidden sm:flex items-center bg-slate-100 rounded-xl p-0.5 border border-slate-200/60 mr-1" title="Tamaño de lectura">
+                                <button type="button" data-font-size="text-sm" class="font-size-btn px-2 py-1 text-[11px] font-bold rounded-lg text-slate-500 hover:text-slate-900 cursor-pointer">A-</button>
+                                <button type="button" data-font-size="text-base" class="font-size-btn px-2 py-1 text-xs font-bold rounded-lg bg-white text-brand-700 shadow-2xs cursor-pointer">A</button>
+                                <button type="button" data-font-size="text-lg" class="font-size-btn px-2 py-1 text-xs font-bold rounded-lg text-slate-500 hover:text-slate-900 cursor-pointer">A+</button>
+                            </div>
+
+                            <button id="btnCopy" type="button" title="Copiar texto" class="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-700 hover:text-brand-700 bg-slate-100 hover:bg-brand-50 border border-slate-200/70 px-3 py-1.5 rounded-xl transition-all cursor-pointer">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                                </svg>
+                                <span id="copyLabel">Copiar</span>
+                            </button>
+
+                            <button id="btnDownload" type="button" title="Descargar como archivo .txt" class="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-700 hover:text-brand-700 bg-slate-100 hover:bg-brand-50 border border-slate-200/70 px-3 py-1.5 rounded-xl transition-all cursor-pointer">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                                </svg>
+                                <span>.TXT</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="relative flex-1 flex flex-col">
+                        <textarea id="extractedText" placeholder="El texto reconocido de la lápida seleccionada (incluyendo letra cursiva, manuscrita o códigos técnicos) aparecerá aquí automáticamente. También puedes editarlo libremente..." class="w-full flex-1 min-h-[210px] sm:min-h-[250px] p-4 sm:p-5 rounded-2xl bg-slate-50/80 border border-slate-200/90 focus:bg-white focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10 outline-none text-slate-800 text-base leading-relaxed resize-none transition-all shadow-inner"></textarea>
+                    </div>
+
+                    <div class="flex justify-center my-3">
+                        <span id="liveBadge" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-brand-50/80 text-brand-700 border border-brand-200/60">
+                            <span class="w-1.5 h-1.5 rounded-full bg-brand-600"></span>
+                            Motor IA Multimodal Listo (Soporte Cursiva)
+                        </span>
+                    </div>
+                </div>
+
+                <!-- Barra de Controles Inferiores -->
+                <div class="pt-3.5 border-t border-slate-100 grid grid-cols-3 gap-2.5 sm:gap-3.5">
+                    <div class="relative flex flex-col items-center">
+                        <button id="btnSpeakToggle" type="button" class="w-full py-2.5 px-2 rounded-2xl bg-slate-50/90 hover:bg-brand-50 border border-slate-200/80 hover:border-brand-300 flex flex-col items-center justify-center gap-1.5 transition-all group cursor-pointer">
+                            <div id="speakIconWrapper" class="w-9 h-9 rounded-xl bg-white shadow-xs border border-slate-100 flex items-center justify-center text-brand-600 group-hover:scale-105 group-hover:bg-brand-600 group-hover:text-white transition-all">
+                                <svg id="iconPlay" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"/>
+                                </svg>
+                                <svg id="iconPause" class="w-4 h-4 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                </svg>
+                            </div>
+                            <span id="speakLabel" class="text-[11px] font-bold text-slate-700 group-hover:text-brand-700">Escuchar</span>
+                        </button>
+                        <button id="btnStopSpeech" type="button" title="Detener lectura" class="hidden absolute -top-2 -right-1 w-6 h-6 rounded-full bg-rose-500 text-white shadow-md flex items-center justify-center hover:bg-rose-600 cursor-pointer">
+                            <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                                <rect x="5" y="5" width="10" height="10" rx="1"/>
+                            </svg>
+                        </button>
+                    </div>
+
+                    <div class="flex flex-col items-center">
+                        <div class="w-full py-2.5 px-2 rounded-2xl bg-slate-50/90 hover:bg-brand-50 border border-slate-200/80 hover:border-brand-300 flex flex-col items-center justify-center gap-1.5 transition-all relative">
+                            <div class="h-9 flex items-center justify-center">
+                                <select id="languageSelect" aria-label="Idioma de escaneo" class="appearance-none bg-transparent font-bold text-xs sm:text-sm text-brand-700 text-center focus:outline-none cursor-pointer px-1">
+                                    <option value="spa" data-tts="es-ES" selected>ES • Español</option>
+                                    <option value="eng" data-tts="en-US">EN • Inglés</option>
+                                    <option value="fra" data-tts="fr-FR">FR • Francés</option>
+                                    <option value="por" data-tts="pt-BR">PT • Portugués</option>
+                                </select>
+                            </div>
+                            <span class="text-[11px] font-bold text-slate-700">Idioma OCR</span>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-col items-center">
+                        <button id="btnClearAll" type="button" class="w-full py-2.5 px-2 rounded-2xl bg-slate-50/90 hover:bg-rose-50 border border-slate-200/80 hover:border-rose-300 flex flex-col items-center justify-center gap-1.5 transition-all group cursor-pointer">
+                            <div class="w-9 h-9 rounded-xl bg-white shadow-xs border border-slate-100 flex items-center justify-center text-slate-600 group-hover:bg-rose-500 group-hover:text-white transition-all">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                                </svg>
+                            </div>
+                            <span class="text-[11px] font-bold text-slate-700 group-hover:text-rose-600">Limpiar</span>
+                        </button>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- SECCIÓN INFERIOR: FICHA INDIVIDUAL / RELLENO AUTOMÁTICO DE DATOS PARA EXCEL -->
+        <section id="excelFormSection" class="mt-6 bg-[#f7f9f5]/95 backdrop-blur-md rounded-3xl shadow-soft border border-emerald-900/10 ring-1 ring-slate-200/70 p-5 sm:p-7">
+            <div class="flex flex-wrap items-start justify-between gap-4 pb-4 border-b border-slate-200/70">
+                <div>
+                    <span id="fichaSubtitleLabel" class="block text-[11px] font-extrabold uppercase tracking-widest text-emerald-800/75">FICHA INDIVIDUAL</span>
+                    <h2 class="text-xl sm:text-2xl font-bold text-slate-900 mt-0.5">Datos para Excel</h2>
+                </div>
+
+                <div class="flex flex-wrap items-center gap-2.5">
+                    <span id="fichaStatusBadge" class="inline-flex items-center px-3.5 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-900 border border-amber-200/80">
+                        Pendiente
+                    </span>
+
+                    <button id="btnAutoFillFromText" type="button" class="inline-flex items-center gap-1.5 text-xs font-bold bg-emerald-700 hover:bg-emerald-800 text-white px-3.5 py-2 rounded-xl shadow-xs transition-all active:scale-95 cursor-pointer">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                        </svg>
+                        <span>Rellenar desde Texto</span>
+                    </button>
+
+                    <button id="btnCopyExcelRow" type="button" class="inline-flex items-center gap-1.5 text-xs font-bold bg-white hover:bg-slate-100 text-slate-800 border border-slate-300/80 px-3.5 py-2 rounded-xl transition-all active:scale-95 cursor-pointer">
+                        <svg class="w-3.5 h-3.5 text-emerald-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+                        </svg>
+                        <span>Copiar Fila Excel</span>
+                    </button>
+
+                    <button id="btnExportCsv" type="button" class="inline-flex items-center gap-1.5 text-xs font-bold bg-white hover:bg-slate-100 text-slate-800 border border-slate-300/80 px-3.5 py-2 rounded-xl transition-all active:scale-95 cursor-pointer">
+                        <svg class="w-3.5 h-3.5 text-brand-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                        </svg>
+                        <span>Descargar .CSV</span>
+                    </button>
+
+                    <button id="btnExportPdf" type="button" class="inline-flex items-center gap-1.5 text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white px-3.5 py-2 rounded-xl shadow-xs transition-all active:scale-95 cursor-pointer">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/>
+                        </svg>
+                        <span>PDF Individual (2 Hojas)</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Campos Principales del Formulario -->
+            <div class="mt-5 space-y-5">
+                <div>
+                    <label for="fieldCodigoOriginal" class="block text-sm font-bold text-slate-800 mb-1.5">Código original</label>
+                    <input id="fieldCodigoOriginal" type="text" value="#FILA/0 #P0 G0" placeholder="#FILA/0 #P0 G0" class="w-full px-4 py-2.5 rounded-2xl bg-white border border-slate-300/90 text-slate-900 font-medium text-sm focus:border-emerald-600 focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all">
+                    <p class="text-xs text-slate-500 mt-1.5">Cada foto empieza de forma independiente en #FILA/0 #P0 G0. Escribe o escanea la ubicación real de esta lápida.</p>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                        <label for="fieldSerialManual" class="block text-sm font-bold text-slate-800 mb-1.5">Serial manual</label>
+                        <input id="fieldSerialManual" type="text" placeholder="Opcional" class="w-full px-4 py-2.5 rounded-2xl bg-white border border-slate-300/90 text-slate-900 text-sm focus:border-emerald-600 focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all">
+                    </div>
+
+                    <div>
+                        <label for="fieldEstado" class="block text-sm font-bold text-slate-800 mb-1.5">Estado</label>
+                        <select id="fieldEstado" class="w-full px-4 py-2.5 rounded-2xl bg-white border border-slate-300/90 text-slate-900 text-sm font-medium focus:border-emerald-600 focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all cursor-pointer">
+                            <option value="Legible" selected>Legible</option>
+                            <option value="Parcialmente legible">Parcialmente legible</option>
+                            <option value="Ilegible / Deteriorado">Ilegible / Deteriorado</option>
+                            <option value="Pendiente de revisión">Pendiente de revisión</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div>
+                    <label for="personSelector" class="block text-sm font-bold text-slate-800 mb-1.5">Persona inscrita</label>
+                    <div class="flex flex-wrap items-center gap-2.5">
+                        <select id="personSelector" class="flex-1 min-w-[200px] px-4 py-2.5 rounded-2xl bg-white border border-slate-300/90 text-slate-900 text-sm font-medium focus:border-emerald-600 focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all cursor-pointer">
+                            <option value="0">Persona 1</option>
+                        </select>
+
+                        <button id="btnAddPerson" type="button" class="px-4 py-2.5 rounded-2xl bg-[#e6ede4] hover:bg-[#d7e3d4] text-emerald-950 font-bold text-xs sm:text-sm transition-colors cursor-pointer">
+                            Añadir persona
+                        </button>
+
+                        <button id="btnRemovePerson" type="button" disabled class="px-4 py-2.5 rounded-2xl bg-rose-50 hover:bg-rose-100 disabled:opacity-50 disabled:cursor-not-allowed text-rose-700 font-bold text-xs sm:text-sm transition-colors cursor-pointer">
+                            Quitar
+                        </button>
+                    </div>
+                </div>
+
+                <div>
+                    <label for="fieldNombreInscrito" class="block text-sm font-bold text-slate-800 mb-1.5">Nombre inscrito</label>
+                    <input id="fieldNombreInscrito" type="text" placeholder="Nombre completo de la persona inscrita" class="w-full px-4 py-2.5 rounded-2xl bg-white border border-slate-300/90 text-slate-900 text-sm focus:border-emerald-600 focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all">
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                        <label for="fieldNacimiento" class="block text-sm font-bold text-slate-800 mb-1.5">Nacimiento</label>
+                        <input id="fieldNacimiento" type="text" placeholder="Año o fecha" class="w-full px-4 py-2.5 rounded-2xl bg-white border border-slate-300/90 text-slate-900 text-sm focus:border-emerald-600 focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all">
+                    </div>
+
+                    <div>
+                        <label for="fieldFallecimiento" class="block text-sm font-bold text-slate-800 mb-1.5">Fallecimiento</label>
+                        <input id="fieldFallecimiento" type="text" placeholder="Año o fecha" class="w-full px-4 py-2.5 rounded-2xl bg-white border border-slate-300/90 text-slate-900 text-sm focus:border-emerald-600 focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all">
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                        <label for="fieldEdadInscrita" class="block text-sm font-bold text-slate-800 mb-1.5">Edad inscrita</label>
+                        <input id="fieldEdadInscrita" type="text" placeholder="Ej. 74 años" class="w-full px-4 py-2.5 rounded-2xl bg-white border border-slate-300/90 text-slate-900 text-sm focus:border-emerald-600 focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all">
+                    </div>
+
+                    <div>
+                        <label for="fieldDedicatoria" class="block text-sm font-bold text-slate-800 mb-1.5">Dedicatoria</label>
+                        <input id="fieldDedicatoria" type="text" placeholder="Epitafio o dedicatoria familiar" class="w-full px-4 py-2.5 rounded-2xl bg-white border border-slate-300/90 text-slate-900 text-sm focus:border-emerald-600 focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all">
+                    </div>
+                </div>
+
+                <div>
+                    <label for="fieldInscripcionCompleta" class="block text-sm font-bold text-slate-800 mb-1.5">Inscripción completa</label>
+                    <textarea id="fieldInscripcionCompleta" rows="3" placeholder="Texto íntegro extraído de esta lápida..." class="w-full px-4 py-2.5 rounded-2xl bg-white border border-slate-300/90 text-slate-900 text-sm leading-relaxed focus:border-emerald-600 focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all resize-y"></textarea>
+                </div>
+
+                <!-- Fotografía de la Bóveda -->
+                <div class="pt-4 border-t border-slate-200/80">
+                    <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+                        <div>
+                            <label class="block text-sm font-bold text-slate-800">Imagen de la bóveda (Segunda hoja del PDF)</label>
+                            <p class="text-xs text-slate-500">Carga la fotografía panorámica de la bóveda para incluirla en la hoja 2 de cada PDF individual.</p>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <label for="bovedaFileInput" class="inline-flex items-center gap-1.5 text-xs font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 px-3.5 py-2 rounded-xl transition-all cursor-pointer">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                                </svg>
+                                <span id="bovedaUploadLabel">Subir Foto Bóveda</span>
+                            </label>
+                            <button id="btnClearBoveda" type="button" class="hidden text-xs font-semibold text-rose-600 hover:bg-rose-50 px-2.5 py-2 rounded-xl transition-colors cursor-pointer">
+                                Quitar
+                            </button>
+                            <input id="bovedaFileInput" type="file" accept="image/*" class="hidden">
+                        </div>
+                    </div>
+
+                    <div id="bovedaPreviewBox" class="hidden mt-2.5 relative w-full max-w-md h-44 rounded-2xl bg-slate-900 border border-slate-300 overflow-hidden flex items-center justify-center">
+                        <img id="bovedaImagePreview" src="" alt="Vista previa de la bóveda" class="max-w-full max-h-full object-contain">
+                        <span class="absolute bottom-2 right-2 bg-black/70 text-white text-[10px] font-semibold px-2.5 py-1 rounded-full backdrop-blur-xs">Lista para Hoja 2 del PDF</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Notificación Toast Flotante -->
+        <div id="toastNotification" class="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 transform translate-y-20 opacity-0 transition-all duration-300 pointer-events-none">
+            <div class="bg-slate-900 text-white text-xs sm:text-sm font-medium px-4 py-2.5 rounded-full shadow-lg flex items-center gap-2">
+                <span id="toastIcon" class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                <span id="toastMessage">Mensaje</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal para configurar la Clave API Personal de Gemini -->
+    <div id="apiKeyModal" class="hidden fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div class="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 class="text-base font-bold text-slate-900">Clave API Personal de Gemini</h3>
+                        <p class="text-[11px] text-slate-500">Se guarda solo en tu navegador (localStorage)</p>
+                    </div>
+                </div>
+                <button id="btnCloseApiKeyModal" type="button" class="text-slate-400 hover:text-slate-700 p-1 rounded-lg cursor-pointer">&times;</button>
+            </div>
+
+            <div class="text-xs text-slate-600 bg-slate-50 p-3 rounded-2xl border border-slate-200/80 space-y-1.5 leading-relaxed">
+                <p><strong>¿Cómo obtener tu clave gratis?</strong></p>
+                <ol class="list-decimal list-inside space-y-1">
+                    <li>Entra a <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" class="text-brand-600 font-semibold underline">Google AI Studio (aistudio.google.com)</a>.</li>
+                    <li>Inicia sesión con tu cuenta de Google y pulsa <strong>"Create API key"</strong>.</li>
+                    <li>Copia la clave (empieza por <code class="bg-slate-200/70 px-1 rounded">AIza...</code>) y pégala abajo.</li>
+                </ol>
+            </div>
+
+            <div>
+                <label for="personalApiKeyInput" class="block text-xs font-bold text-slate-700 mb-1.5">Tu clave API (AIza...)</label>
+                <input id="personalApiKeyInput" type="password" placeholder="AIzaSy..." class="w-full px-3.5 py-2.5 rounded-xl bg-white border border-slate-300 text-sm text-slate-900 focus:border-emerald-600 focus:ring-4 focus:ring-emerald-500/10 outline-none">
+            </div>
+
+            <div class="flex items-center justify-between gap-2 pt-2">
+                <button id="btnRemoveApiKey" type="button" class="text-xs font-semibold text-rose-600 hover:bg-rose-50 px-3 py-2 rounded-xl transition-colors cursor-pointer">
+                    Borrar clave
+                </button>
+                <div class="flex items-center gap-2">
+                    <button id="btnCancelApiKey" type="button" class="text-xs font-semibold text-slate-600 hover:bg-slate-100 px-3.5 py-2 rounded-xl transition-colors cursor-pointer">
+                        Cancelar
+                    </button>
+                    <button id="btnSaveApiKey" type="button" class="text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl shadow-xs transition-all cursor-pointer">
+                        Guardar Clave
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Canvas oculto para capturar fotogramas de cámara y generar imágenes de ejemplo -->
+    <canvas id="helperCanvas" class="hidden"></canvas>
+
+    <!-- Lógica JavaScript externa -->
+    <script src="app.js"></script>
+</body>
+</html>
