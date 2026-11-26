@@ -710,8 +710,8 @@ document.addEventListener('DOMContentLoaded', () => {
             tesseract: 'Procesamiento local; funciona mejor con texto impreso.',
             paddleocr: 'La primera vez descarga el modelo. La imagen se procesa en este navegador y no requiere clave de Gemini.'
         };
-        liveBadge.textContent = readyMessages[engine] || readyMessages.paddleocr;
-        engineHint.textContent = helpMessages[engine] || helpMessages.paddleocr;
+        if (liveBadge) liveBadge.textContent = readyMessages[engine] || readyMessages.paddleocr;
+        if (engineHint) engineHint.textContent = helpMessages[engine] || helpMessages.paddleocr;
     }
 
     document.querySelectorAll('.font-size-btn').forEach(btn => {
