@@ -10,16 +10,20 @@ function sendError(res, status, message) {
 }
 
 function safeSecretEquals(received, expected) {
-  if (typeof received !== "string" ||
-      typeof expected !== "string") {
+  if (
+    typeof received !== "string" ||
+    typeof expected !== "string"
+  ) {
     return false;
   }
 
   const a = Buffer.from(received, "utf8");
   const b = Buffer.from(expected, "utf8");
 
-  return a.length === b.length &&
-    crypto.timingSafeEqual(a, b);
+  return (
+    a.length === b.length &&
+    crypto.timingSafeEqual(a, b)
+  );
 }
 
 module.exports = async function handler(req, res) {
@@ -89,7 +93,7 @@ module.exports = async function handler(req, res) {
   try {
     admin = getSupabaseAdmin();
 
-    // Comprobar que todavía no existe un administrador.
+    // Comprobar que todavía no exista un administrador.
     const { data: existingAdmins, error: lookupError } =
       await admin
         .from("funcionarios")
@@ -99,7 +103,11 @@ module.exports = async function handler(req, res) {
 
     if (lookupError) {
       console.error(lookupError.message);
-      return sendError(500, "Error verificando administradores.");
+      return sendError(
+        res,
+        500,
+        "Error verificando administradores."
+      );
     }
 
     if (existingAdmins && existingAdmins.length > 0) {
@@ -110,7 +118,7 @@ module.exports = async function handler(req, res) {
       );
     }
 
-    // Comprobar que el correo no esté registrado.
+    // Comprobar que el correo no esté registrado en LAPIS.
     const { data: existingFuncionario, error: emailError } =
       await admin
         .from("funcionarios")
@@ -120,11 +128,19 @@ module.exports = async function handler(req, res) {
 
     if (emailError) {
       console.error(emailError.message);
-      return sendError(500, "Error verificando el correo.");
+      return sendError(
+        res,
+        500,
+        "Error verificando el correo."
+      );
     }
 
     if (existingFuncionario && existingFuncionario.length > 0) {
-      return sendError(409, "El correo ya está registrado.");
+      return sendError(
+        res,
+        409,
+        "El correo ya está registrado."
+      );
     }
 
     // Crear identidad en Supabase Auth.
@@ -141,6 +157,7 @@ module.exports = async function handler(req, res) {
 
     if (authError || !authData.user) {
       console.error(authError?.message);
+
       return sendError(
         res,
         400,
@@ -150,7 +167,7 @@ module.exports = async function handler(req, res) {
 
     createdUserId = authData.user.id;
 
-    // Registrar administrador en la tabla de LAPIS.
+    // Registrar al administrador en la tabla de LAPIS.
     const { error: insertError } = await admin
       .from("funcionarios")
       .insert({
@@ -164,7 +181,14 @@ module.exports = async function handler(req, res) {
     if (insertError) {
       console.error(insertError.message);
 
-      await admin.auth.admin.deleteUser(createdUserId);
+      // Eliminar la identidad si no se pudo registrar en LAPIS.
+      const { error: rollbackError } =
+        await admin.auth.admin.deleteUser(createdUserId);
+
+      if (rollbackError) {
+        console.error(rollbackError.message);
+      }
+
       createdUserId = null;
 
       return sendError(
@@ -183,11 +207,14 @@ module.exports = async function handler(req, res) {
         activo: true
       },
       nextStep:
-        "Elimina LAPIS_BOOTSTRAP_SECRET de Vercel y vuelve a desplegar."
+        "Retira LAPIS_BOOTSTRAP_SECRET de Vercel y vuelve a desplegar."
     });
 
   } catch (error) {
-    console.error("Error en auth-bootstrap:", error.message);
+    console.error(
+      "Error en auth-bootstrap:",
+      error.message
+    );
 
     if (createdUserId && admin) {
       const { error: rollbackError } =
