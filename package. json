@@ -1,0 +1,13 @@
+
+{
+  "name": "lapis",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Backend de LAPIS",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.57.0"
+  }
+}
