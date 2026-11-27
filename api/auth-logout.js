@@ -1,5 +1,5 @@
 
-const { createClient } = require("@supabase/supabase-js");
+const { getSupabaseAdmin } = require("./_lib/supabase-admin");
 
 function parseCookies(req) {
   const cookies = {};
@@ -40,6 +40,7 @@ module.exports = async function handler(req, res) {
 
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
+
     return res.status(405).json({
       error: "Método no permitido."
     });
@@ -64,39 +65,23 @@ module.exports = async function handler(req, res) {
 
   const cookies = parseCookies(req);
   const accessToken = cookies.lapis_access_token;
-  const refreshToken = cookies.lapis_refresh_token;
 
   try {
-    if (accessToken && refreshToken) {
-      const url = process.env.SUPABASE_URL;
-      const key = process.env.SUPABASE_PUBLISHABLE_KEY;
+    if (accessToken) {
+      const admin = getSupabaseAdmin();
 
-      if (url && key) {
-        const supabase = createClient(url, key, {
-          auth: {
-            autoRefreshToken: false,
-            persistSession: false,
-            detectSessionInUrl: false
-          }
-        });
+      // Revocar únicamente la sesión actual.
+      const { error } = await admin.auth.admin.signOut(
+        accessToken,
+        "local"
+      );
 
-        const { error: sessionError } = await supabase.auth.setSession({
-          access_token: accessToken,
-          refresh_token: refreshToken
-        });
-
-        if (!sessionError) {
-          const { error } = await supabase.auth.signOut({
-            scope: "global"
-          });
-
-          if (error) {
-            console.error("Error revocando sesión:", error.message);
-          }
-        }
+      if (error) {
+        console.error("Error revocando sesión:", error.message);
       }
     }
 
+    // Eliminar las cookies del navegador.
     clearCookies(res);
 
     return res.status(200).json({
