@@ -73,7 +73,7 @@ module.exports = async function handler(req, res) {
     let access = accessToken;
     let userResult = null;
 
-    // Primero comprobar el token de acceso actual.
+    // Comprobar el token de acceso actual.
     if (access) {
       const result = await admin.auth.getUser(access);
 
@@ -82,7 +82,7 @@ module.exports = async function handler(req, res) {
       }
     }
 
-    // Si el acceso expiró, intentar renovar la sesión.
+    // Renovar la sesión si el token expiró.
     if (!userResult && refreshToken) {
       const { data, error } = await admin.auth.refreshSession({
         refresh_token: refreshToken
@@ -112,7 +112,7 @@ module.exports = async function handler(req, res) {
       });
     }
 
-    // Comprobar que el usuario sigue registrado y autorizado.
+    // Consultar el funcionario asociado a la sesión.
     const { data: funcionario, error } = await admin
       .from("funcionarios")
       .select("user_id, username, rol, activo")
@@ -128,8 +128,12 @@ module.exports = async function handler(req, res) {
       });
     }
 
+    // Revocar las sesiones si el funcionario está desactivado.
     if (!funcionario || !funcionario.activo) {
-      await admin.auth.admin.signOut(userResult.id, "global");
+      if (access) {
+        await admin.auth.admin.signOut(access, "global");
+      }
+
       clearSessionCookies(res);
 
       return res.status(403).json({
