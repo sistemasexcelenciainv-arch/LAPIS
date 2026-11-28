@@ -6,25 +6,78 @@ function getCookies(req) {
         (req.headers.cookie || "").split(";").map(part => {
             const i = part.indexOf("=");
             if (i < 0) return ["", ""];
-            const k = part.slice(0, i).trim();
-            const v = part.slice(i + 1).trim();
-            try { return [k, decodeURIComponent(v)]; }
-            catch { return [k, v]; }
-        }).filter(([k]) => k)
+
+            const key = part.slice(0, i).trim();
+            const value = part.slice(i + 1).trim();
+
+            try {
+                return [key, decodeURIComponent(value)];
+            } catch {
+                return [key, value];
+            }
+        }).filter(([key]) => key)
     );
+}
+
+function readBody(req) {
+    let body = req.body;
+
+    if (typeof body === "string") {
+        try {
+            body = JSON.parse(body);
+        } catch {
+            return null;
+        }
+    }
+
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+        return null;
+    }
+
+    return body;
+}
+
+function validId(value) {
+    const id = String(value ?? "").trim();
+
+    if (!/^\d{1,19}$/.test(id)) return null;
+
+    try {
+        const number = BigInt(id);
+
+        if (
+            number <= 0n ||
+            number > 9223372036854775807n
+        ) {
+            return null;
+        }
+
+        return id;
+    } catch {
+        return null;
+    }
+}
+
+function cleanText(value) {
+    return typeof value === "string" ? value.trim() : "";
 }
 
 module.exports = async function handler(req, res) {
     res.setHeader("Cache-Control", "no-store, max-age=0");
-    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader(
+        "Content-Type",
+        "application/json; charset=utf-8"
+    );
 
     if (req.method !== "PATCH") {
         res.setHeader("Allow", "PATCH");
+
         return res.status(405).json({
             error: "Método no permitido."
         });
     }
 
+    // VALIDAR ORIGEN
     const origin = req.headers.origin;
 
     if (origin && req.headers.host) {
@@ -41,6 +94,7 @@ module.exports = async function handler(req, res) {
         }
     }
 
+    // VALIDAR SESIÓN
     const token = getCookies(req).lapis_access_token;
 
     if (!token) {
@@ -49,10 +103,27 @@ module.exports = async function handler(req, res) {
         });
     }
 
+    // LEER CUERPO DE LA SOLICITUD
+    const body = readBody(req);
+
+    if (!body) {
+        return res.status(400).json({
+            error: "El cuerpo de la solicitud no contiene JSON válido."
+        });
+    }
+
+    const id = validId(body.id);
+
+    if (!id) {
+        return res.status(400).json({
+            error: "Identificador no válido."
+        });
+    }
+
     try {
         const db = getSupabaseAdmin();
 
-        // Verificar sesión
+        // VERIFICAR USUARIO AUTENTICADO
         const { data: auth, error: authError } =
             await db.auth.getUser(token);
 
@@ -62,7 +133,7 @@ module.exports = async function handler(req, res) {
             });
         }
 
-        // Verificar funcionario activo
+        // VERIFICAR FUNCIONARIO
         const { data: funcionario, error: userError } = await db
             .from("funcionarios")
             .select("username, rol, activo")
@@ -81,22 +152,11 @@ module.exports = async function handler(req, res) {
             });
         }
 
-        const id = String(body.id || "").trim();
-
-if (!id || id.length > 80) {
-
-        if (!Number.isSafeInteger(id) || id <= 0) {
-            return res.status(400).json({
-                error: "Identificador no válido."
-            });
-        }
-
-        // =================================
+        // =====================================
         // ACTUALIZAR BÓVEDA
-        // =================================
+        // =====================================
 
         if (body.tipo === "sepultura") {
-
             const estados = [
                 "Pendiente",
                 "Legible",
@@ -108,13 +168,17 @@ if (!id || id.length > 80) {
             const galeria = Number(body.galeria);
             const fila = Number(body.fila);
 
+            const codigoOriginal = cleanText(body.codigo_original);
+            const codigoInventario = cleanText(body.codigo_inventario);
+            const observaciones = cleanText(body.observaciones);
+
             if (
                 !Number.isSafeInteger(pabellon) || pabellon <= 0 ||
                 !Number.isSafeInteger(galeria) || galeria <= 0 ||
                 !Number.isSafeInteger(fila) || fila <= 0
             ) {
                 return res.status(400).json({
-                    error: "La ubicación debe contener números mayores que cero."
+                    error: "Pabellón, galería y fila deben ser números enteros mayores que cero."
                 });
             }
 
@@ -124,31 +188,23 @@ if (!id || id.length > 80) {
                 });
             }
 
-            if (
-                typeof body.codigo_original !== "string" ||
-                !body.codigo_original.trim() ||
-                body.codigo_original.trim().length > 120
-            ) {
+            if (!codigoOriginal || codigoOriginal.length > 120) {
                 return res.status(400).json({
                     error: "El código original es obligatorio."
                 });
             }
 
-            const codigoInventario =
-                String(body.codigo_inventario || "").trim();
-
-            const observaciones =
-                String(body.observaciones || "").trim();
-
-            if (codigoInventario.length > 120 ||
-                observaciones.length > 5000) {
+            if (
+                codigoInventario.length > 120 ||
+                observaciones.length > 5000
+            ) {
                 return res.status(400).json({
                     error: "Uno de los campos supera el límite permitido."
                 });
             }
 
             const changes = {
-                codigo_original: body.codigo_original.trim(),
+                codigo_original: codigoOriginal,
                 codigo_inventario: codigoInventario || null,
                 pabellon,
                 galeria,
@@ -183,7 +239,7 @@ if (!id || id.length > 80) {
 
                 if (error.code === "23505") {
                     return res.status(409).json({
-                        error: "El código ya está asignado a otra bóveda."
+                        error: "El código original ya está asignado a otra bóveda."
                     });
                 }
 
@@ -209,15 +265,12 @@ if (!id || id.length > 80) {
             });
         }
 
-        // =================================
+        // =====================================
         // ACTUALIZAR FALLECIDO
-        // =================================
+        // =====================================
 
         if (body.tipo === "fallecido") {
-
-            const nombre = String(
-                body.nombre_completo || ""
-            ).trim();
+            const nombre = cleanText(body.nombre_completo);
 
             if (!nombre || nombre.length > 250) {
                 return res.status(400).json({
@@ -238,11 +291,11 @@ if (!id || id.length > 80) {
             };
 
             for (const field of fields) {
-                const value = String(body[field] || "").trim();
+                const value = cleanText(body[field]);
 
                 if (value.length > 2000) {
                     return res.status(400).json({
-                        error: "Un campo supera el límite permitido."
+                        error: "El campo " + field + " supera el límite permitido."
                     });
                 }
 
@@ -295,8 +348,10 @@ if (!id || id.length > 80) {
 
     } catch (error) {
         console.error("[LAPIS RECORD UPDATE]", {
-            message: error.message,
-            code: error.code
+            message: error?.message,
+            code: error?.code,
+            details: error?.details,
+            hint: error?.hint
         });
 
         return res.status(500).json({
