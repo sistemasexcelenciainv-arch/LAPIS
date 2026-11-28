@@ -512,7 +512,16 @@
             scanner.scrollIntoView({ block: "start" });
         }
     }
+// Escuchar la autenticación confirmada por auth-ui.js.
+document.addEventListener("lapis:authenticated", function(event) {
 
+    if (event.detail && dashboard) {
+        dashboard.querySelector("#lapisDashboardUser").textContent =
+            event.detail.username + " · " + event.detail.rol;
+    }
+
+    openDashboard();
+});
     function checkAuthentication() {
         const authenticated =
             !document.body.classList.contains("lapis-auth-locked") &&
