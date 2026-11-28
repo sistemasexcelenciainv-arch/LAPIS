@@ -395,16 +395,14 @@
 
         document.body.appendChild(dashboard);
 
-        dashboard.querySelector("#lapisOpenScanner")
-            .addEventListener("click", openScanner);
-
         dashboard.querySelector("#lapisOpenVaults")
-            .addEventListener("click", () => {
-                alert(
-                    "El módulo de consulta de bóvedas será " +
-                    "habilitado en la siguiente etapa."
-                );
-            });
+    .addEventListener("click", () => {
+        if (window.LAPISVaults) {
+            window.LAPISVaults.open();
+        } else {
+            alert("No se pudo cargar el módulo de consulta.");
+        }
+    });
 
         backButton = document.createElement("button");
         backButton.id = "lapisBackDashboard";
