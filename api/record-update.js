@@ -81,8 +81,9 @@ module.exports = async function handler(req, res) {
             });
         }
 
-        const body = req.body || {};
-        const id = Number(body.id);
+        const id = String(body.id || "").trim();
+
+if (!id || id.length > 80) {
 
         if (!Number.isSafeInteger(id) || id <= 0) {
             return res.status(400).json({
