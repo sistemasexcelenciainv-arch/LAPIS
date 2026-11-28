@@ -244,6 +244,12 @@
 
         document.getElementById("lapisLogout")
             .addEventListener("click", logout);
+        // Notificar al panel principal que el usuario ya está autenticado.
+document.dispatchEvent(
+    new CustomEvent("lapis:authenticated", {
+        detail: funcionario
+    })
+);
     }
 
     function showLogin(errorMessage) {
