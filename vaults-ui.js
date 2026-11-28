@@ -181,9 +181,96 @@
                 border-radius:16px;
                 color:#64748b;
             }
+            .lv-actions {
+                display:flex;
+                gap:8px;
+                flex-wrap:wrap;
+                margin-top:12px;
+            }
+            .lv-edit-btn {
+                border:1px solid #cbd5e1;
+                background:#eff6ff;
+                color:#1d4ed8;
+                border-radius:9px;
+                padding:8px 11px;
+                font-weight:750;
+                cursor:pointer;
+            }
+            .lv-editor {
+                display:none;
+                margin:14px 0;
+                padding:18px;
+                border:1px solid #bfdbfe;
+                border-radius:14px;
+                background:#eff6ff;
+            }
+            .lv-editor h3 {
+                margin:0 0 14px;
+                color:#17366b;
+                font-size:16px;
+            }
+            .lv-form-grid {
+                display:grid;
+                grid-template-columns:repeat(2,minmax(0,1fr));
+                gap:12px;
+            }
+            .lv-form-field label {
+                display:block;
+                margin-bottom:6px;
+                color:#475569;
+                font-size:11px;
+                font-weight:800;
+            }
+            .lv-form-field input,
+            .lv-form-field select,
+            .lv-form-field textarea {
+                width:100%;
+                padding:10px 11px;
+                border:1px solid #cbd5e1;
+                border-radius:9px;
+                background:white;
+                color:#172033;
+                font:inherit;
+                font-size:13px;
+            }
+            .lv-form-field textarea {
+                min-height:76px;
+                resize:vertical;
+            }
+            .lv-form-wide { grid-column:1/-1; }
+            .lv-editor-actions {
+                display:flex;
+                gap:9px;
+                margin-top:14px;
+            }
+            .lv-message {
+                display:none;
+                margin:12px 0;
+                padding:11px 13px;
+                border-radius:9px;
+                font-size:12px;
+                font-weight:700;
+            }
+            .lv-message.success {
+                display:block;
+                color:#166534;
+                background:#dcfce7;
+            }
+            .lv-message.error {
+                display:block;
+                color:#991b1b;
+                background:#fee2e2;
+            }
+            .lv-button:disabled,
+            .lv-edit-btn:disabled {
+                opacity:.6;
+                cursor:wait;
+            }
             @media(max-width:760px) {
                 .lv-filters { grid-template-columns:repeat(2,1fr); }
                 .lv-grid { grid-template-columns:1fr; }
+                .lv-form-grid { grid-template-columns:1fr; }
+                .lv-form-wide { grid-column:auto; }
                 .lv-wrap { width:calc(100% - 22px); }
             }
         `;
@@ -242,6 +329,11 @@
                     <span class="lv-muted" id="lvCount">Cargando...</span>
                 </div>
 
+                <div id="lvMessage" class="lv-message"
+                    role="status" aria-live="polite"></div>
+
+                <section id="lvEditor" class="lv-editor"></section>
+
                 <div id="lvResults">
                     <div class="lv-empty">Cargando inventario...</div>
                 </div>
@@ -292,6 +384,25 @@
                 searchTerm = e.target.value.trim().toLowerCase();
                 render();
             });
+
+        // Delegación de eventos para los botones de edición.
+        modal.addEventListener("click", e => {
+            const button = e.target.closest("[data-lv-edit]");
+            if (!button) return;
+
+            openEditor(
+                button.dataset.lvEdit,
+                button.dataset.lvId
+            );
+        });
+
+        modal.addEventListener("submit", async e => {
+            const form = e.target.closest("#lvEditForm");
+            if (!form) return;
+
+            e.preventDefault();
+            await saveEditor(form);
+        });
     }
 
     function locationRows() {
@@ -317,7 +428,9 @@
             select.value = "";
         }
 
-        if (label) select.setAttribute("aria-label", label);
+        if (label) {
+            select.setAttribute("aria-label", label);
+        }
     }
 
     function updateFilters() {
@@ -340,8 +453,12 @@
             rows.map(v => v.pabellon).filter(v => v != null)
         )].sort((a,b) => a-b);
 
-        fillSelect("lvPavilion", pavilions,
-            selectedPavilion, "Pabellón");
+        fillSelect(
+            "lvPavilion",
+            pavilions,
+            selectedPavilion,
+            "Pabellón"
+        );
 
         selectedPavilion =
             modal.querySelector("#lvPavilion").value;
@@ -355,8 +472,12 @@
             pavilionRows.map(v => v.galeria).filter(v => v != null)
         )].sort((a,b) => a-b);
 
-        fillSelect("lvGallery", galleries,
-            selectedGallery, "Galería");
+        fillSelect(
+            "lvGallery",
+            galleries,
+            selectedGallery,
+            "Galería"
+        );
 
         selectedGallery =
             modal.querySelector("#lvGallery").value;
@@ -370,8 +491,12 @@
             galleryRows.map(v => v.fila).filter(v => v != null)
         )].sort((a,b) => a-b);
 
-        fillSelect("lvRow", rowNumbers,
-            selectedRow, "Fila");
+        fillSelect(
+            "lvRow",
+            rowNumbers,
+            selectedRow,
+            "Fila"
+        );
 
         selectedRow = modal.querySelector("#lvRow").value;
     }
@@ -506,6 +631,14 @@
                                             ${p.dedicatoria
                                                 ? `<br>Dedicatoria: ${esc(p.dedicatoria)}`
                                                 : ""}
+                                            <div class="lv-actions">
+                                                <button type="button"
+                                                    class="lv-edit-btn"
+                                                    data-lv-edit="fallecido"
+                                                    data-lv-id="${esc(p.id)}">
+                                                    Editar datos del fallecido
+                                                </button>
+                                            </div>
                                         </div>
                                         <hr>
                                     `).join("")
@@ -527,6 +660,15 @@
                                 ${v.observaciones
                                     ? `<p><strong>Observaciones:</strong> ${esc(v.observaciones)}</p>`
                                     : ""}
+
+                                <div class="lv-actions">
+                                    <button type="button"
+                                        class="lv-edit-btn"
+                                        data-lv-edit="sepultura"
+                                        data-lv-id="${esc(v.id)}">
+                                        Editar datos de la bóveda
+                                    </button>
+                                </div>
                             </details>
                         </article>
                     `;
@@ -535,10 +677,310 @@
         `;
     }
 
+    function showMessage(message, type) {
+        const box = modal.querySelector("#lvMessage");
+        box.textContent = message;
+        box.className = "lv-message " + (type || "success");
+        box.style.display = "block";
+    }
+
+    function hideEditor() {
+        const editor = modal.querySelector("#lvEditor");
+        editor.style.display = "none";
+        editor.innerHTML = "";
+    }
+
+    function openEditor(type, id) {
+        const editor = modal.querySelector("#lvEditor");
+
+        const record = type === "sepultura"
+            ? (data?.sepulturas || []).find(
+                v => String(v.id) === String(id)
+            )
+            : (data?.fallecidos || []).find(
+                p => String(p.id) === String(id)
+            );
+
+        if (!record) {
+            showMessage(
+                "No se encontró el registro que deseas editar.",
+                "error"
+            );
+            return;
+        }
+
+        const isVault = type === "sepultura";
+
+        const fields = isVault
+            ? `
+                <div class="lv-form-field">
+                    <label for="lvCodigoOriginal">
+                        Código original *
+                    </label>
+                    <input
+                        id="lvCodigoOriginal"
+                        name="codigo_original"
+                        maxlength="120"
+                        required
+                        value="${esc(record.codigo_original || "")}">
+                </div>
+
+                <div class="lv-form-field">
+                    <label for="lvCodigoInventario">
+                        Código de inventario
+                    </label>
+                    <input
+                        id="lvCodigoInventario"
+                        name="codigo_inventario"
+                        maxlength="120"
+                        value="${esc(record.codigo_inventario || "")}">
+                </div>
+
+                <div class="lv-form-field">
+                    <label for="lvPabellonEdit">Pabellón *</label>
+                    <input
+                        id="lvPabellonEdit"
+                        name="pabellon"
+                        type="number"
+                        min="1"
+                        step="1"
+                        required
+                        value="${esc(record.pabellon)}">
+                </div>
+
+                <div class="lv-form-field">
+                    <label for="lvGaleriaEdit">Galería *</label>
+                    <input
+                        id="lvGaleriaEdit"
+                        name="galeria"
+                        type="number"
+                        min="1"
+                        step="1"
+                        required
+                        value="${esc(record.galeria)}">
+                </div>
+
+                <div class="lv-form-field">
+                    <label for="lvFilaEdit">Fila *</label>
+                    <input
+                        id="lvFilaEdit"
+                        name="fila"
+                        type="number"
+                        min="1"
+                        step="1"
+                        required
+                        value="${esc(record.fila)}">
+                </div>
+
+                <div class="lv-form-field">
+                    <label for="lvEstadoEdit">Estado *</label>
+                    <select
+                        id="lvEstadoEdit"
+                        name="estado"
+                        required>
+                        ${["Pendiente","Legible","Ilegible","Libre"].map(s =>
+                            `<option value="${s}" ${record.estado === s ? "selected" : ""}>${s}</option>`
+                        ).join("")}
+                    </select>
+                </div>
+
+                <div class="lv-form-field lv-form-wide">
+                    <label for="lvObservacionesEdit">
+                        Observaciones
+                    </label>
+                    <textarea
+                        id="lvObservacionesEdit"
+                        name="observaciones"
+                        maxlength="5000">${esc(record.observaciones || "")}</textarea>
+                </div>
+            `
+            : `
+                <div class="lv-form-field lv-form-wide">
+                    <label for="lvNombreEdit">Nombre completo *</label>
+                    <input
+                        id="lvNombreEdit"
+                        name="nombre_completo"
+                        maxlength="250"
+                        required
+                        value="${esc(record.nombre_completo || "")}">
+                </div>
+
+                <div class="lv-form-field">
+                    <label for="lvNacimientoEdit">
+                        Fecha de nacimiento
+                    </label>
+                    <input
+                        id="lvNacimientoEdit"
+                        name="fecha_nacimiento"
+                        maxlength="2000"
+                        value="${esc(record.fecha_nacimiento || "")}">
+                </div>
+
+                <div class="lv-form-field">
+                    <label for="lvFallecimientoEdit">
+                        Fecha de fallecimiento
+                    </label>
+                    <input
+                        id="lvFallecimientoEdit"
+                        name="fecha_fallecimiento"
+                        maxlength="2000"
+                        value="${esc(record.fecha_fallecimiento || "")}">
+                </div>
+
+                <div class="lv-form-field">
+                    <label for="lvEdadEdit">Edad inscrita</label>
+                    <input
+                        id="lvEdadEdit"
+                        name="edad_inscrita"
+                        maxlength="2000"
+                        value="${esc(record.edad_inscrita || "")}">
+                </div>
+
+                <div class="lv-form-field lv-form-wide">
+                    <label for="lvDedicatoriaEdit">Dedicatoria</label>
+                    <textarea
+                        id="lvDedicatoriaEdit"
+                        name="dedicatoria"
+                        maxlength="2000">${esc(record.dedicatoria || "")}</textarea>
+                </div>
+            `;
+
+        editor.innerHTML = `
+            <h3>
+                ${isVault
+                    ? "Editar bóveda " + esc(record.serial || "")
+                    : "Editar datos del fallecido"}
+            </h3>
+
+            <p class="lv-muted">
+                Los cambios se guardarán en la base de datos de LAPIS.
+            </p>
+
+            <form id="lvEditForm">
+                <input type="hidden" name="tipo" value="${type}">
+                <input type="hidden" name="id" value="${esc(record.id)}">
+
+                <div class="lv-form-grid">
+                    ${fields}
+                </div>
+
+                <div class="lv-editor-actions">
+                    <button
+                        class="lv-button"
+                        id="lvSaveButton"
+                        type="submit">
+                        Guardar cambios
+                    </button>
+
+                    <button
+                        class="lv-button secondary"
+                        type="button"
+                        id="lvCancelButton">
+                        Cancelar
+                    </button>
+                </div>
+            </form>
+        `;
+
+        editor.style.display = "block";
+
+        editor.querySelector("#lvCancelButton")
+            .addEventListener("click", hideEditor);
+
+        editor.scrollIntoView({
+            behavior: "smooth",
+            block: "center"
+        });
+
+        modal.querySelector("#lvMessage").style.display = "none";
+    }
+
+    async function saveEditor(form) {
+        const saveButton = form.querySelector("#lvSaveButton");
+        const formData = new FormData(form);
+        const payload = Object.fromEntries(formData.entries());
+
+        if (payload.tipo === "sepultura") {
+            payload.pabellon = Number(payload.pabellon);
+            payload.galeria = Number(payload.galeria);
+            payload.fila = Number(payload.fila);
+        }
+
+        saveButton.disabled = true;
+        saveButton.textContent = "Guardando...";
+
+        try {
+            const response = await fetch("/api/record-update", {
+                method: "PATCH",
+                credentials: "same-origin",
+                cache: "no-store",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify(payload)
+            });
+
+            const result = await response.json().catch(() => ({}));
+
+            if (
+                !response.ok ||
+                !result.success ||
+                !result.registro
+            ) {
+                throw new Error(
+                    result.error ||
+                    "No fue posible guardar los cambios."
+                );
+            }
+
+            const collection = payload.tipo === "sepultura"
+                ? data.sepulturas
+                : data.fallecidos;
+
+            const index = collection.findIndex(item =>
+                String(item.id) === String(payload.id)
+            );
+
+            if (index === -1) {
+                throw new Error(
+                    "Se guardó en el servidor, pero no se pudo actualizar la ficha visible. Vuelve a abrir la consulta."
+                );
+            }
+
+            collection[index] = {
+                ...collection[index],
+                ...result.registro
+            };
+
+            hideEditor();
+            render();
+
+            showMessage(
+                result.message ||
+                "Cambios guardados correctamente.",
+                "success"
+            );
+
+        } catch (error) {
+            showMessage(
+                error.message ||
+                "Error guardando los cambios.",
+                "error"
+            );
+
+            saveButton.disabled = false;
+            saveButton.textContent = "Guardar cambios";
+        }
+    }
+
     async function open() {
         createModal();
 
         modal.style.display = "block";
+        hideEditor();
+
+        modal.querySelector("#lvMessage").style.display = "none";
+
         modal.querySelector("#lvResults").innerHTML =
             '<div class="lv-empty">Cargando inventario...</div>';
 
@@ -552,10 +994,14 @@
             const result = await response.json();
 
             if (!response.ok) {
-                throw new Error(result.error || "Error consultando bóvedas.");
+                throw new Error(
+                    result.error ||
+                    "Error consultando bóvedas."
+                );
             }
 
             data = result;
+
             selectedCemetery = "";
             selectedPavilion = "";
             selectedGallery = "";
@@ -574,15 +1020,28 @@
     }
 
     function close() {
-        if (modal) modal.style.display = "none";
+        if (modal) {
+            modal.style.display = "none";
+        }
 
-        const dashboard = document.getElementById("lapisDashboard");
-        const back = document.getElementById("lapisBackDashboard");
+        const dashboard =
+            document.getElementById("lapisDashboard");
 
-        if (dashboard) dashboard.style.display = "block";
-        if (back) back.style.display = "none";
+        const back =
+            document.getElementById("lapisBackDashboard");
+
+        if (dashboard) {
+            dashboard.style.display = "block";
+        }
+
+        if (back) {
+            back.style.display = "none";
+        }
     }
 
-    window.LAPISVaults = { open, close };
+    window.LAPISVaults = {
+        open,
+        close
+    };
 
 })();
